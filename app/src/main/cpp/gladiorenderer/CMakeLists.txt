@@ -27,6 +27,7 @@ add_library(gladiorenderer SHARED
 
 target_link_libraries(gladiorenderer
                       winlator
+                      m
                       log
                       android
                       EGL
