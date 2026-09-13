@@ -75,7 +75,7 @@ public enum Binding {
             case KEY_APOSTROPHE:
                 return "'";
             case KEY_GRAVE:
-                return "`";
+                return "`/~";
             case KEY_MINUS:
                 return "-";
             case KEY_EQUALS:
