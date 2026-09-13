@@ -563,9 +563,13 @@ void readVertexArrayElement(GLContext* context, int arrayIdx, int elementIdx) {
         case POSITION_ARRAY_INDEX:
             internalReadVertexArrayElement(context, arrayIdx, elementIdx, &currentRenderer->geometry.vertices, NULL);
             break;
-        case COLOR_ARRAY_INDEX:
-            internalReadVertexArrayElement(context, arrayIdx, elementIdx, &currentRenderer->geometry.colors, currentRenderer->state.color);
+        case COLOR_ARRAY_INDEX: {
+            /* 颜色数组未启用时该常量色即顶点色，需与其余站点一致地走材质 alpha 规则 */
+            float vertexColor[4];
+            GLRenderer_getEffectiveVertexColor(currentRenderer, vertexColor);
+            internalReadVertexArrayElement(context, arrayIdx, elementIdx, &currentRenderer->geometry.colors, vertexColor);
             break;
+        }
         case NORMAL_ARRAY_INDEX:
             internalReadVertexArrayElement(context, arrayIdx, elementIdx, &currentRenderer->geometry.normals, currentRenderer->state.normal);
             break;

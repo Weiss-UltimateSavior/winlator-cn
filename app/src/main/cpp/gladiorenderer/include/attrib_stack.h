@@ -3,6 +3,7 @@
 
 #include "gladio.h"
 #include "gl_texture.h"
+#include "gl_renderer.h"
 
 typedef struct AttribStack {
     GLbitfield mask;
@@ -15,6 +16,16 @@ typedef struct AttribStack {
     GLint blendDst;
     GLfloat clearColor[4];
     GLboolean colorMask[4];
+
+    /* GL_LIGHTING_BIT：保存 GL_LIGHTING 开关、GL_COLOR_MATERIAL 开关与 FACE/MODE、
+       材质集 materials[2]。
+       hasMaterials：材质集按需创建，入栈时为 NULL 则出栈时不强行创建。 */
+    bool lighting;
+    bool colorMaterial;
+    GLenum colorMaterialFace;
+    GLenum colorMaterialMode;
+    bool hasMaterials;
+    GLMaterial materials[2];
 
     GLfloat color[4];
     GLfloat normal[3];

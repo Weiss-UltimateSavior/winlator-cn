@@ -18,6 +18,17 @@ void AttribStack_push(GLbitfield mask) {
         GLRenderer_getParamsv(currentRenderer, GL_COLOR_WRITEMASK, GL_BOOL, &stack->colorMask);
     }
 
+    if (mask & GL_LIGHTING_BIT) {
+        stack->lighting = currentRenderer->state.lighting;
+        stack->colorMaterial = currentRenderer->state.colorMaterial.enabled;
+        stack->colorMaterialFace = currentRenderer->state.colorMaterial.face;
+        stack->colorMaterialMode = currentRenderer->state.colorMaterial.mode;
+        stack->hasMaterials = currentRenderer->materials != NULL;
+        if (stack->hasMaterials) {
+            memcpy(stack->materials, currentRenderer->materials, sizeof(stack->materials));
+        }
+    }
+
     if (mask & GL_CURRENT_BIT) {
         stack->activeTexCoord = currentRenderer->clientState.activeTexCoord;
         GLRenderer_getParamsv(currentRenderer, GL_CURRENT_COLOR, GL_FLOAT, &stack->color);
@@ -98,6 +109,17 @@ void AttribStack_pop() {
 
         glClearColor(stack->clearColor[0], stack->clearColor[1], stack->clearColor[2], stack->clearColor[3]);
         glColorMask(stack->colorMask[0], stack->colorMask[1], stack->colorMask[2], stack->colorMask[3]);
+    }
+
+    if (stack->mask & GL_LIGHTING_BIT) {
+        currentRenderer->state.lighting = stack->lighting;
+        currentRenderer->state.colorMaterial.enabled = stack->colorMaterial;
+        currentRenderer->state.colorMaterial.face = stack->colorMaterialFace;
+        currentRenderer->state.colorMaterial.mode = stack->colorMaterialMode;
+        /* 材质集只增不删（仅 GLRenderer_destroy 释放），故入栈时存在则出栈时必存在 */
+        if (stack->hasMaterials && currentRenderer->materials) {
+            memcpy(currentRenderer->materials, stack->materials, sizeof(stack->materials));
+        }
     }
 
     if (stack->mask & GL_CURRENT_BIT) {

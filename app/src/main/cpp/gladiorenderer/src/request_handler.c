@@ -417,6 +417,10 @@ void gd_handle_glColor4f(GLContext* context) {
 
     currentRenderer->geometry.colors.position++;
     if (currentRenderer->state.colorMaterial.enabled) {
+        /* COLOR_MATERIAL：被跟踪材质的 RGBA 跟随当前颜色（等价于用当前颜色调 glMaterialfv），
+           含 diffuse 的 alpha。因此启用 COLOR_MATERIAL 的应用在「顶点 alpha 改取材质 alpha」后
+           得到的仍是 glColor 的 alpha，可见行为不变；只有未启用 COLOR_MATERIAL、
+           改用 glMaterialfv 设定材质 alpha 的应用（WC3 属此类）才会被本次修复纠正。 */
         float color[] = {red, green, blue, alpha};
         GLRenderer_setMaterialParams(currentRenderer, currentRenderer->state.colorMaterial.face, currentRenderer->state.colorMaterial.mode, color);
     }

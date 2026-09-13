@@ -35,7 +35,9 @@ static void initMaterials(GLRenderer* renderer) {
     GLMaterial* materials = calloc(2, sizeof(GLMaterial));
 
     const float ambient[] = {0.2f, 0.2f, 0.2f};
-    const float diffuse[] = {0.8f, 0.8f, 0.8f};
+    /* 规范初值：GL_DIFFUSE = (0.8, 0.8, 0.8, 1.0)。alpha 必须显式写 1.0，
+       否则 calloc 出 0.0 会让光照下的物体在 SRC_ALPHA 混合时变成全透明。 */
+    const float diffuse[] = {0.8f, 0.8f, 0.8f, 1.0f};
 
     memcpy(materials[0].ambient, ambient, sizeof(ambient));
     memcpy(materials[0].diffuse, diffuse, sizeof(diffuse));
@@ -43,6 +45,26 @@ static void initMaterials(GLRenderer* renderer) {
     memcpy(materials[1].diffuse, diffuse, sizeof(diffuse));
 
     renderer->materials = materials;
+}
+
+void GLRenderer_getEffectiveVertexColor(const GLRenderer* renderer, float out[4]) {
+    memcpy(out, renderer->state.color, sizeof(renderer->state.color));
+    if (!renderer->state.lighting) return;
+
+    /* GL 规范（1.1 §2.12.2 及 glColorMaterial/glMaterial 手册页）：光照启用时，
+       顶点颜色的 A 分量取材质 diffuse 的 alpha，而不是 glColor 的 alpha。
+       取正面材质：gladio 未实现 GL_LIGHT_MODEL_TWO_SIDE，背面材质集不参与渲染。 */
+    if (renderer->state.colorMaterial.enabled && renderer->state.colorMaterial.mode == 0) {
+        /* 特例：应用只调了 glEnable(GL_COLOR_MATERIAL) 而从未调 glColorMaterial
+           （mode 为 calloc 的 0，非合法枚举值）。规范的 COLOR_MATERIAL_PARAMETER
+           默认值是 GL_AMBIENT_AND_DIFFUSE —— 本就用 glColor 的 RGBA 跟踪 diffuse，
+           其 alpha 就是 glColor 的 alpha；而 gladio 的 setMaterialParams 收到 pname=0
+           不匹配任何分支，材质根本不被更新。此时若改取材质 alpha 会让这类应用
+           丢失原本来自 glColor 的半透明，故保持 glColor 的 alpha。 */
+        return;
+    }
+    /* materials == NULL 表示 guest 从未调用过任何 glMaterial*，取规范材质 diffuse 初值的 alpha=1.0 */
+    out[3] = renderer->materials ? renderer->materials[0].diffuse[3] : 1.0f;
 }
 
 static void initLight(GLLight* light) {
@@ -145,8 +167,10 @@ static void updateVertexBuffers(GLRenderer* renderer, int* attribLocations) {
             bindVertexBuffer(renderer, renderer->bufferIds[2], attribLocations[COLOR_ARRAY_INDEX], 4, geometry->colors.size, geometry->colors.buffer);
         }
         else {
+            float vertexColor[4];
+            GLRenderer_getEffectiveVertexColor(renderer, vertexColor);
             GLRenderer_disableVertexAttribute(renderer, attribLocations[COLOR_ARRAY_INDEX]);
-            glVertexAttrib4fv(attribLocations[COLOR_ARRAY_INDEX], renderer->state.color);
+            glVertexAttrib4fv(attribLocations[COLOR_ARRAY_INDEX], vertexColor);
         }
     }
 
@@ -385,7 +409,11 @@ void GLRenderer_addVertex(GLRenderer* renderer, GLfloat x, GLfloat y, GLfloat z,
     ArrayBuffer_putFloat4(&renderer->geometry.vertices, x, y, z, w);
 
     if (renderer->geometry.colors.position > 0 || renderer->geometry.colors.size > 0) {
-        ArrayBuffer_putBytes(&renderer->geometry.colors, renderer->state.color, 4 * sizeof(float));
+        /* 逐顶点求值：COLOR_MATERIAL 启用时材质随 glColor 实时变化，
+           必须在此刻（该顶点的光照输入色）取材质 diffuse alpha，不能推迟到绘制时。 */
+        float vertexColor[4];
+        GLRenderer_getEffectiveVertexColor(renderer, vertexColor);
+        ArrayBuffer_putBytes(&renderer->geometry.colors, vertexColor, sizeof(vertexColor));
     }
 
     if (renderer->geometry.normals.position > 0) {
@@ -1056,8 +1084,10 @@ void GLRenderer_drawPixels(GLRenderer* renderer, GLsizei width, GLsizei height, 
     bindVertexBuffer(renderer, renderer->bufferIds[4], material->location.attributes[TEXCOORD_ARRAY_INDEX], 4, raster->quad.texCoords.size, raster->quad.texCoords.buffer);
 
     glBindBuffer(GL_ARRAY_BUFFER, renderer->bufferIds[3]);
+    float vertexColor[4];
+    GLRenderer_getEffectiveVertexColor(renderer, vertexColor);
     GLRenderer_disableVertexAttribute(renderer, material->location.attributes[COLOR_ARRAY_INDEX]);
-    glVertexAttrib4fv(material->location.attributes[COLOR_ARRAY_INDEX], renderer->state.color);
+    glVertexAttrib4fv(material->location.attributes[COLOR_ARRAY_INDEX], vertexColor);
 
     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
     GLRenderer_disableUnusedVertexAttributes(renderer);
