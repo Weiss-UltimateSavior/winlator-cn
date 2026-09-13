@@ -183,7 +183,8 @@ public class ShortcutSettingsDialog extends ContentDialog {
 
             ArrayList<ControlsProfile> profiles = inputControlsManager.getProfiles(true);
             int controlsProfile = sControlsProfile.getSelectedItemPosition() > 0 ? profiles.get(sControlsProfile.getSelectedItemPosition()-1).id : 0;
-            shortcut.putExtra("controlsProfile", controlsProfile > 0 ? String.valueOf(controlsProfile) : null);
+            // 始终显式写入（含 None 时的 "0"），以区分"显式禁用"与"从未配置(继承容器)"；启动时 getProfile(0) 返回 null 即不加载任何虚拟按键配置
+            shortcut.putExtra("controlsProfile", String.valueOf(controlsProfile));
 
             int dinputMapperType = sDInputMapperType.getSelectedItemPosition();
             String containerDInputMapperType = shortcut.container.getExtra("dinputMapperType", String.valueOf(GamepadHandler.DINPUT_MAPPER_TYPE_STANDARD));
