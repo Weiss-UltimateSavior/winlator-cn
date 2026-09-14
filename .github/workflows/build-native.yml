@@ -47,7 +47,7 @@ jobs:
           EOF
 
       - name: Set up JDK
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           java-version: ${{ env.JAVA_VERSION }}
           distribution: 'temurin'
@@ -55,6 +55,12 @@ jobs:
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          # 不能用该 action 的默认值 "tools platform-tools"：Google 已将遗留的
+          # tools(Android SDK Tools) 包从 SDK 仓库下架，sdkmanager tools 会报
+          # "Failed to find package 'tools'" 并让本步骤以退出码 1 失败，
+          # 整个 job 在 Gradle 启动前就中止。
+          packages: platform-tools
 
       - name: Install NDK and CMake
         run: |
