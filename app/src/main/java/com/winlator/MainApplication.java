@@ -130,7 +130,13 @@ public class MainApplication extends Application {
         final int myPid = android.os.Process.myPid();
         Thread thread = new Thread(() -> {
             try {
-                try (OutputStreamWriter writer = new OutputStreamWriter(new FileOutputStream(logFile, false), StandardCharsets.UTF_8)) {
+                // 容器退出会走 XServerDisplayActivity.exit -> AppUtils.restartApplication -> Runtime.exit(0)，
+                // 整个进程被杀后由 makeRestartActivityTask 拉起新进程，onCreate 会再次走到这里。
+                // 若此时截断文件，丢掉的正好是"容器退出前"那段最关键的日志，故改为追加；
+                // 仅在文件不存在或已超过 maxSize 时才清空(与下面循环内的轮转规则一致)，
+                // 每段会话由这个带新 pid 的 header 分隔。
+                boolean append = logFile.isFile() && logFile.length() <= maxSize;
+                try (OutputStreamWriter writer = new OutputStreamWriter(new FileOutputStream(logFile, append), StandardCharsets.UTF_8)) {
                     writer.write("========== logcat capture started " + new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(new Date()) + " ==========\n");
                     writer.write("filter: pid=" + myPid + " keep all, other processes tags = " + LOGCAT_TAG_WHITELIST + "\n");
                     writer.flush();
