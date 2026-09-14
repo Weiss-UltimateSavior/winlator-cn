@@ -12,6 +12,8 @@ import android.widget.Toast;
 
 import androidx.preference.PreferenceManager;
 
+import com.winlator.core.PatchUtils;
+
 import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileOutputStream;
@@ -74,6 +76,14 @@ public class MainApplication extends Application {
     public void onCreate() {
         super.onCreate();
         Thread.setDefaultUncaughtExceptionHandler(new CrashHandler(this, Thread.getDefaultUncaughtExceptionHandler()));
+        // MT 改包共存后 getPackageName() 为新包名，PatchUtils 据此决定是否替换解压产物中的宿主路径
+        // (包名仍为原包名 com.winlator 时不启用，原版 APK 行为完全不变)
+        File dataDir = getDataDir();
+        PatchUtils.init(getPackageName(), dataDir);
+        // 启用后解压产物里的 /data/data/com.winlator/files/rootfs 会被等长替换为
+        // /data/data/<包名>/<别名>，需要在数据目录下建软链 <别名> -> files/rootfs，
+        // 使替换后的路径仍解析到 rootfs。
+        PatchUtils.ensureAliasSymlink(dataDir);
         startLogcatCapture();
     }
 

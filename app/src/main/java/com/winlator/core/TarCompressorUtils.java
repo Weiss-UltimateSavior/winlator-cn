@@ -325,6 +325,13 @@ public abstract class TarCompressorUtils {
                         try (BufferedOutputStream outStream = new BufferedOutputStream(new FileOutputStream(file), StreamUtils.BUFFER_SIZE)) {
                             if (!StreamUtils.copy(tar, outStream)) return false;
                         }
+
+                        // 仅对命中白名单的解压产物做等长宿主路径替换(跟随当前包名)。
+                        // 判据用落盘绝对路径而非 entryName：entryName 常带 "./" 前缀，
+                        // 且第三方 wine 包会被上面的 listener 重映射到 opt/installed-wine/ 下。
+                        if (PatchUtils.needPatch(file)) {
+                            PatchUtils.apply(file);
+                        }
                     }
                 }
 
