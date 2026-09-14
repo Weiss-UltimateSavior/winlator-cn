@@ -311,8 +311,6 @@
     <string name="disable_mouse_input">禁用鼠标输入</string>
     <string name="move_cursor_to_touchpoint">鼠标跟手</string>
     <string name="pinch_zoom">双指缩放</string>
-    
-    <string name="sync_every_frame">同步每一帧</string>
     <string name="dpi_font_size">DPI (字体大小)</string>
     <string name="file_manager">文件管理</string>
     <string name="documents">我的文档</string>
@@ -360,10 +358,13 @@
     <string name="open_android_browser_from_wine">Wine链接用安卓浏览器打开</string>
     <string name="use_android_clipboard_on_Wine">连通安卓剪贴板</string>
     <string name="pause_on_background">切到后台时暂停容器</string>
-    <string name="keep_alive">后台保活（电池优化白名单 + 唤醒锁）</string>
     <string name="text_color">边框与文字颜色</string>
     <string name="apply_to_all">颜色应用到全部</string>
     <string name="colors_applied">颜色已应用到全部控件</string>
+    <string name="enable_background_protection">启用后台保护</string>
+    <string name="enable_background_protection_tooltip">切到后台或锁屏时保持容器存活，但容器内的进程会被暂停。</string>
+    <string name="enable_background_wakelock">锁屏时保持唤醒锁</string>
+    <string name="enable_background_wakelock_tooltip">避免解锁设备后返回容器时出现异常。</string>
     <string name="capture_pointer_on_external_mouse">捕获外接鼠标</string>
     <string name="there_are_no_items_to_download">没有要下载的项目</string>
     <string name="enable_direct_rendering">直接渲染(花屏重影请关闭)</string>
@@ -563,4 +564,10 @@
     <string name="send_to_desktop_done">快捷方式已添加，若桌面未出现图标，请在系统设置中为该应用开启快捷方式权限</string>
     <string name="send_to_desktop_not_supported">此设备不支持添加主屏幕快捷方式</string>
     <string name="shortcut_not_found">快捷方式不存在</string>
+    <string name="fgs_notification_channel_desc">让 Winlator 在后台持续运行，避免 Wine 会话被安卓的后台进程管理中断。</string>
+    <string name="fgs_notification_content_container_background">容器会话正在后台运行</string>
+    <string name="fgs_notification_content_container_foreground">容器会话正在运行</string>
+    <string name="fgs_notification_content_else">Winlator 正在后台运行</string>
+    <string name="save_mem_on_run_from_steam">从 Steam 启动时节省内存</string>
+    <string name="present_mode">呈现模式</string>
 </resources>

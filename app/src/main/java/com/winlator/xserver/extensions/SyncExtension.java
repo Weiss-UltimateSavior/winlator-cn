@@ -13,6 +13,7 @@ import com.winlator.xserver.errors.BadMatch;
 import com.winlator.xserver.errors.XRequestError;
 
 import java.io.IOException;
+import java.util.concurrent.TimeUnit;
 
 public class SyncExtension extends Extension {
     private final SparseBooleanArray fences = new SparseBooleanArray();
@@ -34,9 +35,24 @@ public class SyncExtension extends Extension {
         return "SYNC";
     }
 
+    @Override
+    public byte getErrorCount() {
+        return 1;
+    }
+
     public void setTriggered(int id) {
         synchronized (fences) {
             if (fences.indexOfKey(id) >= 0) fences.put(id, true);
+        }
+    }
+
+    private boolean isAnyTriggered(int[] ids) throws XRequestError {
+        synchronized (fences) {
+            for (int id : ids) {
+                if (fences.indexOfKey(id) < 0) throw new BadFence(id);
+                if (fences.get(id)) return true;
+            }
+            return false;
         }
     }
 
@@ -83,27 +99,26 @@ public class SyncExtension extends Extension {
     }
 
     private void awaitFence(XClient client, XInputStream inputStream, XOutputStream outputStream) throws IOException, XRequestError {
-        synchronized (fences) {
-            int length = client.getRemainingRequestLength();
-            int[] ids = new int[length / 4];
-            int i = 0;
+        int length = client.getRemainingRequestLength();
+        int[] ids = new int[length / 4];
+        int i = 0;
 
-            while (length != 0) {
-                ids[i++] = inputStream.readInt();
-                length -= 4;
-            }
+        while (length != 0) {
+            ids[i++] = inputStream.readInt();
+            length -= 4;
+        }
 
-            boolean anyTriggered = false;
-            do {
-                for (int id : ids) {
-                    if (fences.indexOfKey(id) < 0) throw new BadFence(id);
-                    anyTriggered = fences.get(id);
-                    if (anyTriggered) break;
+        int busyWaitIter = 0;
+        while (!isAnyTriggered(ids)) {
+            try {
+                if (busyWaitIter++ < 500) {
+                    Thread.yield();
                 }
-
-                Thread.yield();
+                else TimeUnit.MICROSECONDS.sleep(100);
             }
-            while (!anyTriggered);
+            catch (InterruptedException e) {
+                break;
+            }
         }
     }
 

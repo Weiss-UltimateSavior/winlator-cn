@@ -16,6 +16,7 @@ public class Win32AppWorkarounds implements OnPreExecListener {
     private final short taskAffinityMask;
     private final short taskAffinityMaskWoW64;
     private final XServerDisplayActivity activity;
+    private SaveMemoryTask saveMemoryTask;
 
     private interface Workaround {}
 
@@ -47,7 +48,7 @@ public class Win32AppWorkarounds implements OnPreExecListener {
         void setValue(KeyValueSet wincomponents);
     }
 
-    private interface FileManipulationWorkaround extends Workaround {
+    private interface PreExecWorkaround extends Workaround {
         boolean apply(String path);
     }
 
@@ -161,7 +162,7 @@ public class Win32AppWorkarounds implements OnPreExecListener {
             case "discipl2.exe":
                 return (DXWrapperWorkaround) () -> DXWrappers.WINED3D;
             case "cnc3.exe":
-                return (FileManipulationWorkaround) (path) -> {
+                return (PreExecWorkaround) (path) -> {
                     File executableDir = getExecutableDir(path);
                     File oldFile = new File(executableDir, "CNC3_english_1.10.SkuDef");
                     if (oldFile.isFile()) oldFile.renameTo(new File(executableDir, "CNC3_english_1.10.SkuDef.old"));
@@ -170,12 +171,20 @@ public class Win32AppWorkarounds implements OnPreExecListener {
             case "start.exe":
                 return (WindowWorkaround) (window) -> {
                     if (!window.getName().contains("Easy Anti-Cheat Launch Error")) return;
-                    runAnother(window, "bin/DBXV2.exe");
+                    runGameExecutable(window, null);
                 };
             case "ff9_launcher.exe":
                 return (WindowWorkaround) (window) -> AppUtils.runDelayed(() -> winHandler.bringToFront(window.getClassName(), window.getHandle()), 1000);
             case "launcher.exe":
-                return (FileManipulationWorkaround) this::runNoLauncher;
+                return (PreExecWorkaround) (path) -> runGameExecutable(null, path);
+            case "steam.exe":
+                return (PreExecWorkaround) (path) -> {
+                    if (activity.getPreferences().getBoolean("save_mem_on_run_from_steam", true)) {
+                        if (saveMemoryTask == null) saveMemoryTask = new SaveMemoryTask();
+                        saveMemoryTask.start();
+                    }
+                    return false;
+                };
             default:
                 return null;
         }
@@ -185,27 +194,21 @@ public class Win32AppWorkarounds implements OnPreExecListener {
         return new File(FileUtils.getDirname(WineUtils.dosToUnixPath(dosPath, activity.getContainer())));
     }
 
-    private boolean runNoLauncher(String path) {
-        final String[] relativePaths = {"BorderlandsPreSequel.exe"};
+    private boolean runGameExecutable(Window window, String dosPath) {
+        final String[] relativePaths = {"BorderlandsPreSequel.exe", "bin/DBXV2.exe"};
 
-        File executableDir = getExecutableDir(path);
+        WinHandler winHandler = activity.getWinHandler();
+        if (window != null) dosPath = winHandler.getExecutablePath(window.getProcessId());
+        File executableDir = getExecutableDir(dosPath);
+
         for (String relativePath : relativePaths) {
             if ((new File(executableDir, relativePath)).isFile()) {
-                final WinHandler winHandler = activity.getWinHandler();
-                AppUtils.runDelayed(() -> winHandler.exec(path.replace(FileUtils.getName(path), relativePath.replace("/", "\\")), null), 500);
+                final String filename = dosPath.replace(FileUtils.getName(dosPath), relativePath.replace("/", "\\"));
+                AppUtils.runDelayed(() -> winHandler.exec(filename, null), 500);
                 return true;
             }
         }
         return false;
-    }
-
-    private void runAnother(Window window, String relativePath) {
-        WinHandler winHandler = activity.getWinHandler();
-        String path = winHandler.getExecutablePath(window.getProcessId());
-        if ((new File(getExecutableDir(path), relativePath)).isFile()) {
-            winHandler.killProcess(null, window.getProcessId());
-            winHandler.exec(path.replace(FileUtils.getName(path), relativePath.replace("/", "\\")), null);
-        }
     }
 
     @Override
@@ -213,8 +216,8 @@ public class Win32AppWorkarounds implements OnPreExecListener {
         String className = FileUtils.getName(path);
         Workaround workaround = getWorkaroundFor(className);
 
-        if (workaround instanceof FileManipulationWorkaround) {
-            return ((FileManipulationWorkaround)workaround).apply(path);
+        if (workaround instanceof PreExecWorkaround) {
+            return ((PreExecWorkaround)workaround).apply(path);
         }
         else return false;
     }

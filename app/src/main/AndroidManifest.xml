@@ -12,9 +12,9 @@
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS"/>
     <uses-permission android:name="android.permission.VIBRATE"/>
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK"/>
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
     <uses-permission android:name="android.permission.WAKE_LOCK"/>
-    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS"/>
     <uses-permission android:name="com.android.launcher.permission.INSTALL_SHORTCUT"/>
 
     <application
@@ -78,6 +78,15 @@
             android:exported="false"
             android:screenOrientation="sensor" />
 
+        <!-- Needed for keep the container alive when in background or the device is locked. -->
+        <service
+            android:name="com.winlator.services.ForegroundService"
+            android:enabled="true"
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback"
+            android:stopWithTask="false">
+        </service>
+
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="com.winlator.FileProvider"
@@ -104,10 +113,5 @@
                 <action android:name="android.content.action.DOCUMENTS_PROVIDER" />
             </intent-filter>
         </provider>
-
-        <service
-            android:name=".ForegroundService"
-            android:foregroundServiceType="dataSync"
-            android:exported="false" />
     </application>
 </manifest>

@@ -8,8 +8,8 @@ android {
         applicationId 'com.winlator'
         minSdkVersion 26
         targetSdkVersion 28
-        versionCode 32
-        versionName "11.2.cn.03"
+        versionCode 33
+        versionName "11.2.cn.04"
     }
 
     buildTypes {
@@ -67,4 +67,5 @@ dependencies {
     implementation 'com.github.luben:zstd-jni:1.5.7-10@aar'
     implementation 'org.tukaani:xz:1.12'
     implementation 'org.apache.commons:commons-compress:1.28.0'
+    implementation 'androidx.lifecycle:lifecycle-process:2.5.1'
 }

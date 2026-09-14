@@ -8,6 +8,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.ActivityInfo;
+import android.content.res.Configuration;
 import android.os.Bundle;
 import android.view.KeyEvent;
 import android.view.Menu;
@@ -68,6 +69,7 @@ import com.winlator.inputcontrols.ExternalController;
 import com.winlator.inputcontrols.InputControlsManager;
 import com.winlator.math.Mathf;
 import com.winlator.renderer.GLRenderer;
+import com.winlator.services.ForegroundService;
 import com.winlator.widget.FrameRating;
 import com.winlator.widget.InputControlsView;
 import com.winlator.widget.MagnifierView;
@@ -147,9 +149,7 @@ public class XServerDisplayActivity extends AppCompatActivity implements Navigat
         AppUtils.hideSystemUI(this);
         AppUtils.keepScreenOn(this);
         setContentView(R.layout.xserver_display_activity);
-
-        PreferenceManager.getDefaultSharedPreferences(this).edit().putBoolean("container_running", true).apply();
-        startService(new Intent(this, ForegroundService.class));
+        ForegroundService.startSession(this);
 
         final PreloaderDialog preloaderDialog = new PreloaderDialog(this);
         preferences = PreferenceManager.getDefaultSharedPreferences(this);
@@ -345,10 +345,12 @@ public class XServerDisplayActivity extends AppCompatActivity implements Navigat
             inputControlsView.setOverlayOpacity(preferences.getFloat("overlay_opacity", InputControlsView.DEFAULT_OVERLAY_OPACITY));
             inputControlsView.invalidate();
         }
+        ForegroundService.onResumeSession(this);
     }
 
     @Override
     public void onPause() {
+        ForegroundService.onPauseSession(this);
         super.onPause();
         if (environment != null && !isInPictureInPictureMode() && !isInMultiWindowMode()) {
             environment.onPause();
@@ -357,9 +359,16 @@ public class XServerDisplayActivity extends AppCompatActivity implements Navigat
     }
 
     @Override
+    public void onPictureInPictureModeChanged(boolean isInPictureInPictureMode, Configuration newConfig) {
+        super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig);
+        ForegroundService.setPipMode(isInPictureInPictureMode);
+    }
+
+    @Override
     protected void onDestroy() {
         winHandler.stop();
         if (environment != null) environment.stopEnvironmentComponents();
+        ForegroundService.stopSession(this);
         super.onDestroy();
     }
 
@@ -475,8 +484,6 @@ public class XServerDisplayActivity extends AppCompatActivity implements Navigat
     }
 
     private void exit() {
-        preferences.edit().putBoolean("container_running", false).apply();
-        stopService(new Intent(this, ForegroundService.class));
         winHandler.stop();
         if (environment != null) environment.stopEnvironmentComponents();
 
@@ -488,6 +495,7 @@ public class XServerDisplayActivity extends AppCompatActivity implements Navigat
             AppUtils.restartApplication(this, options);
         }
         else AppUtils.restartApplication(this);
+        ForegroundService.stopSession(this);
     }
 
     private void setupWineSystemFiles() {
@@ -835,7 +843,6 @@ public class XServerDisplayActivity extends AppCompatActivity implements Navigat
         }
 
         if (graphicsDriver[0].equals(GraphicsDrivers.TURNIP)) {
-            envVars.put("MESA_VK_WSI_PRESENT_MODE", "mailbox");
             TurnipConfigDialog.setEnvVars(this, graphicsDriverConfig[0], envVars);
 
             if (changed) {

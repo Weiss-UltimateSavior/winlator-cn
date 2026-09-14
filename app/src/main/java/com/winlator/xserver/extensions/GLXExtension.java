@@ -64,8 +64,8 @@ public class GLXExtension extends Extension {
     }
 
     @Override
-    public byte getFirstErrorId() {
-        return Byte.MIN_VALUE;
+    public byte getErrorCount() {
+        return 3;
     }
 
     private void createGLContext(XClient client, XInputStream inputStream, XOutputStream outputStream) throws IOException, XRequestError {

@@ -8,7 +8,7 @@ import java.util.concurrent.locks.ReentrantLock;
 
 import dalvik.annotation.optimization.CriticalNative;
 
-public class XOutputStream {
+public class XOutputStream implements XStreamLock {
     private final ReentrantLock lock = new ReentrantLock();
     private final long nativePtr;
 
@@ -55,6 +55,24 @@ public class XOutputStream {
         for (int i = offset; i < length; i++) writeByte(nativePtr, data[i]);
     }
 
+    public void writeShortAt(int position, short value) {
+        final byte[] data = {
+            (byte)(value & 0xff),
+            (byte)((value >> 8) & 0xff)
+        };
+        writeAt(nativePtr, position, data);
+    }
+
+    public void writeIntAt(int position, int value) {
+        final byte[] data = {
+            (byte)(value & 0xff),
+            (byte)((value >>> 8) & 0xff),
+            (byte)((value >>> 16) & 0xff),
+            (byte)((value >>> 24) & 0xff)
+        };
+        writeAt(nativePtr, position, data);
+    }
+
     public void writeAt(int position, byte[] data) {
         writeAt(nativePtr, position, data);
     }
@@ -74,27 +92,32 @@ public class XOutputStream {
         writePad(nativePtr, length);
     }
 
+    public void writeFP3232(float value) {
+        float tmp;
+        tmp = (float)Math.floor(value);
+        int integral = (int)tmp;
+        tmp = (value - tmp) * (1L<<32);
+        int frac = (int)tmp;
+        writeInt(integral);
+        writeInt(frac);
+    }
+
     public XStreamLock lock() {
-        return new OutputStreamLock();
+        lock.lock();
+        return this;
     }
 
     public void destroy() {
         destroy(nativePtr);
     }
 
-    private class OutputStreamLock implements XStreamLock {
-        public OutputStreamLock() {
-            lock.lock();
+    @Override
+    public void close() throws IOException {
+        try {
+            if (!sendData(nativePtr)) throw new IOException("Failed to send data.");
         }
-
-        @Override
-        public void close() throws IOException {
-            try {
-                if (!sendData(nativePtr)) throw new IOException("Failed to send data.");
-            }
-            finally {
-                lock.unlock();
-            }
+        finally {
+            lock.unlock();
         }
     }
 
@@ -126,8 +149,10 @@ public class XOutputStream {
 
     private static native void writeByteBuffer(long nativePtr, ByteBuffer data, int offset, int length);
 
+    @CriticalNative
     private static native boolean sendData(long nativePtr);
 
+    @CriticalNative
     private static native void destroy(long nativePtr);
 
     @CriticalNative

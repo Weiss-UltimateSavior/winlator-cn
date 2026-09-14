@@ -171,4 +171,9 @@
         <item>CP2 Direct touch（RA2)</item>
         <item>V3(Dark)</item>
     </string-array>
+    <string-array name="present_mode_entries">
+        <item>immediate</item>
+        <item>mailbox</item>
+        <item>fifo</item>
+    </string-array>
 </resources>

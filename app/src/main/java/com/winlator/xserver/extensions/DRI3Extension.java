@@ -4,7 +4,6 @@ import static com.winlator.xserver.XClientRequestHandler.RESPONSE_CODE_SUCCESS;
 
 import com.winlator.core.Callback;
 import com.winlator.renderer.GPUImage;
-import com.winlator.renderer.Texture;
 import com.winlator.sysvshm.SysVSharedMemory;
 import com.winlator.xconnector.XConnectorEpoll;
 import com.winlator.xconnector.XInputStream;
@@ -106,19 +105,17 @@ public class DRI3Extension extends Extension {
         int windowId = inputStream.readInt();
 
         Window window = xServer.windowManager.getWindow(windowId);
-        if (window == null) throw new BadPixmap(windowId);
-
-        Drawable content = window.getContent();
-        final Texture texture = content.getTexture();
-
-        if (!(texture instanceof GPUImage)) {
-            xServer.getRenderer().xServerView.queueEvent(texture::destroy);
-            content.setTexture(new GPUImage(content, false));
+        Drawable content;
+        if (window == null) {
+            Pixmap pixmap = xServer.pixmapManager.getPixmap(windowId);
+            if (pixmap == null) throw new BadPixmap(windowId);
+            content = pixmap.drawable;
         }
+        else content = window.getContent();
 
-        GPUImage gpuImage = (GPUImage)content.getTexture();
-        short stride = gpuImage.getStride();
-        int nativeHandle = gpuImage.getNativeHandle();
+        GPUImage texture = GPUImage.createOrObtain(xServer, content, false, true);
+        short stride = texture.getStride();
+        int nativeHandle = texture.getNativeHandle();
 
         xServer.debugPrint("bufferFromPixmap handle "+nativeHandle+", width "+content.width+", height "+content.height+", stride "+stride);
 

@@ -3,6 +3,7 @@ package com.winlator.renderer;
 import androidx.annotation.Keep;
 
 import com.winlator.xserver.Drawable;
+import com.winlator.xserver.XServer;
 
 import java.nio.ByteBuffer;
 
@@ -82,6 +83,17 @@ public class GPUImage extends Texture {
 
     public long getHardwareBufferPtr() {
         return hardwareBufferPtr;
+    }
+
+    public static GPUImage createOrObtain(XServer xServer, Drawable drawable, boolean cpuAccess, boolean useHALPixelFormatBGRA8888) {
+        final Texture texture = drawable.getTexture();
+        if (!(texture instanceof GPUImage)) {
+            xServer.getRenderer().xServerView.queueEvent(texture::destroy);
+            GPUImage gpuImage = new GPUImage(drawable, cpuAccess, useHALPixelFormatBGRA8888);
+            drawable.setTexture(gpuImage);
+            return gpuImage;
+        }
+        else return (GPUImage)texture;
     }
 
     private native long createHardwareBuffer(short width, short height, boolean cpuAccess, boolean useHALPixelFormatBGRA8888);

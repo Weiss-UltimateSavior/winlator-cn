@@ -7,6 +7,7 @@ import android.opengl.EGL14;
 import androidx.collection.ArrayMap;
 import androidx.preference.PreferenceManager;
 
+import java.util.Locale;
 import java.util.Objects;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -20,6 +21,13 @@ import javax.microedition.khronos.opengles.GL10;
 import dalvik.annotation.optimization.CriticalNative;
 
 public abstract class GPUHelper {
+    public enum VkPresentMode {
+        IMMEDIATE, MAILBOX, FIFO, FIFO_RELAXED;
+
+        public String value() {
+            return name().toLowerCase(Locale.ENGLISH);
+        }
+    }
     public static int VK_API_VERSION_1_3 = GPUHelper.vkMakeVersion(1, 3, 0);
 
     static {
@@ -160,4 +168,8 @@ public abstract class GPUHelper {
     public static native int vkGetApiVersion();
 
     public static native void setGlobalEGLContext();
+
+    public static native long createOffscreenEGLContext(boolean sharedContext);
+
+    public static native void destroyOffscreenEGLContext(long contextPtr);
 }

@@ -312,8 +312,6 @@
     <string name="disable_mouse_input">Disable Mouse Input</string>
     <string name="move_cursor_to_touchpoint">Move Cursor to Touchpoint</string>
     <string name="pinch_zoom">Pinch Zoom</string>
-    
-    <string name="sync_every_frame">Sync every frame</string>
     <string name="dpi_font_size">DPI (Font Size)</string>
     <string name="gamepad_model">Gamepad Model</string>
     <string name="file_manager">File Manager</string>
@@ -362,10 +360,13 @@
     <string name="open_android_browser_from_wine">Open Android Browser from Wine</string>
     <string name="use_android_clipboard_on_Wine">Use Android Clipboard on Wine</string>
     <string name="pause_on_background">Pause container when in background</string>
-    <string name="keep_alive">Background keep-alive (battery optimization exemption + wake lock)</string>
     <string name="text_color">Border &amp; text color</string>
     <string name="apply_to_all">Apply colors to all</string>
     <string name="colors_applied">Colors applied to all controls</string>
+    <string name="enable_background_protection">Enable Background Protection</string>
+    <string name="enable_background_protection_tooltip">Keep container alive in background or when device locked, but processes\'re paused.</string>
+    <string name="enable_background_wakelock">Enable wakelock when the device is locked</string>
+    <string name="enable_background_wakelock_tooltip">Avoid issues when returning after unlocking the device.</string>
     <string name="capture_pointer_on_external_mouse">Capture pointer on external mouse</string>
     <string name="there_are_no_items_to_download">There are no items to download</string>
     <string name="enable_direct_rendering">Enable direct rendering</string>
@@ -563,4 +564,10 @@
     <string name="send_to_desktop_done">Shortcut added. If no icon appears on the home screen, enable the shortcut permission for this app in system settings</string>
     <string name="send_to_desktop_not_supported">Adding shortcuts to the home screen is not supported on this device</string>
     <string name="shortcut_not_found">Shortcut not found</string>
+    <string name="fgs_notification_channel_desc">Keeps Winlator running in the background so a wine session is not interrupted by Android\'s background process management.</string>
+    <string name="fgs_notification_content_container_background">A container session is running in the background</string>
+    <string name="fgs_notification_content_container_foreground">There is a container session running</string>
+    <string name="fgs_notification_content_else">Winlator is running in the background</string>
+    <string name="save_mem_on_run_from_steam">Save memory on run from Steam</string>
+    <string name="present_mode">Present Mode</string>
 </resources>

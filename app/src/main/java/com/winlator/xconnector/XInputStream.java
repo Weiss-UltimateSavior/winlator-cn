@@ -111,6 +111,7 @@ public class XInputStream {
     @CriticalNative
     private static native int available(long nativePtr);
 
+    @CriticalNative
     private static native int readMoreData(long nativePtr, boolean canReceiveAncillaryMessages);
 
     @CriticalNative
@@ -122,5 +123,6 @@ public class XInputStream {
     @CriticalNative
     private static native int getAncillaryFd(long nativePtr);
 
+    @CriticalNative
     private static native void destroy(long nativePtr);
 }

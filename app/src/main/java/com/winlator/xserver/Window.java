@@ -357,7 +357,7 @@ public class Window extends XResource {
     }
 
     public boolean isRenderable() {
-        return attributes.isMapped() && width > 1 && height > 1;
+        return attributes.isMapped() && width > 1 && height > 1 && isInputOutput();
     }
 
     public boolean containsPoint(short rootX, short rootY) {

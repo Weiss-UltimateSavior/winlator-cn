@@ -41,13 +41,13 @@ public class MITSHMExtension extends Extension {
     }
 
     @Override
-    public byte getFirstErrorId() {
-        return Byte.MIN_VALUE;
+    public byte getEventCount() {
+        return 1;
     }
 
     @Override
-    public byte getFirstEventId() {
-        return 64;
+    public byte getErrorCount() {
+        return 1;
     }
 
     private void queryVersion(XClient client, XInputStream inputStream, XOutputStream outputStream) throws IOException, XRequestError {
@@ -56,8 +56,8 @@ public class MITSHMExtension extends Extension {
             outputStream.writeByte((byte)0);
             outputStream.writeShort(client.getSequenceNumber());
             outputStream.writeInt(0);
-            outputStream.writeShort((short)MAJOR_VERSION);
-            outputStream.writeShort((short)MINOR_VERSION);
+            outputStream.writeShort(MAJOR_VERSION);
+            outputStream.writeShort(MINOR_VERSION);
             outputStream.writeShort((short)0);
             outputStream.writeShort((short)0);
             outputStream.writeByte((byte)0);

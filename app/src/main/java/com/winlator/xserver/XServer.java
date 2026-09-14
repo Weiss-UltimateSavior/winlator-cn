@@ -9,10 +9,12 @@ import com.winlator.xserver.extensions.BigReqExtension;
 import com.winlator.xserver.extensions.DRI3Extension;
 import com.winlator.xserver.extensions.Extension;
 import com.winlator.xserver.extensions.GLXExtension;
+import com.winlator.xserver.extensions.GenericEventExtension;
 import com.winlator.xserver.extensions.MITSHMExtension;
 import com.winlator.xserver.extensions.PresentExtension;
 import com.winlator.xserver.extensions.SyncExtension;
 import com.winlator.xserver.extensions.XComposite;
+import com.winlator.xserver.extensions.XInputExtension;
 
 import java.nio.charset.Charset;
 import java.util.EnumMap;
@@ -20,6 +22,7 @@ import java.util.concurrent.locks.ReentrantLock;
 
 public class XServer {
     public enum Lockable {WINDOW_MANAGER, PIXMAP_MANAGER, DRAWABLE_MANAGER, GRAPHIC_CONTEXT_MANAGER, INPUT_DEVICE, CURSOR_MANAGER, SHMSEGMENT_MANAGER}
+    private static final boolean ENABLE_CURSOR_LOCKER = false;
     public static final short VERSION = 11;
     public static final String VENDOR_NAME = "Elbrus Technologies, LLC";
     public static final Charset LATIN1_CHARSET = Charset.forName("latin1");
@@ -47,7 +50,7 @@ public class XServer {
     public XServer(XServerDisplayActivity activity, ScreenInfo screenInfo) {
         this.activity = activity;
         this.screenInfo = screenInfo;
-        cursorLocker = new CursorLocker(this);
+        cursorLocker = ENABLE_CURSOR_LOCKER ? new CursorLocker(this) : null;
         for (Lockable lockable : Lockable.values()) locks.put(lockable, new ReentrantLock());
 
         pixmapManager = new PixmapManager();
@@ -67,7 +70,7 @@ public class XServer {
     }
 
     public void setRelativeMouseMovement(boolean relativeMouseMovement) {
-        cursorLocker.setEnabled(!relativeMouseMovement);
+        if (cursorLocker != null) cursorLocker.setEnabled(!relativeMouseMovement);
         this.relativeMouseMovement = relativeMouseMovement;
     }
 
@@ -151,6 +154,10 @@ public class XServer {
     public void injectPointerMoveDelta(int dx, int dy) {
         try (XLock lock = lock(Lockable.WINDOW_MANAGER, Lockable.INPUT_DEVICE)) {
             pointer.setPosition(pointer.getX() + dx, pointer.getY() + dy);
+            if (cursorLocker == null) pointer.clampPosition();
+
+            XInputExtension xInputExtension = getExtension(XInputExtension.class);
+            if (xInputExtension != null) xInputExtension.sendRawMotion(dx, dy);
         }
     }
 
@@ -164,6 +171,9 @@ public class XServer {
         else if (buttonCode == Pointer.Button.BUTTON_RIGHT) rbtn++;
         try (XLock lock = lock(Lockable.WINDOW_MANAGER, Lockable.INPUT_DEVICE)) {
             pointer.setButton(buttonCode, true);
+
+            XInputExtension xInputExtension = getExtension(XInputExtension.class);
+            if (xInputExtension != null) xInputExtension.sendRawButtonState(buttonCode.code(), true);
         }
     }
 
@@ -187,6 +197,9 @@ public class XServer {
         }
         try (XLock lock = lock(Lockable.WINDOW_MANAGER, Lockable.INPUT_DEVICE)) {
             pointer.setButton(buttonCode, false);
+
+            XInputExtension xInputExtension = getExtension(XInputExtension.class);
+            if (xInputExtension != null) xInputExtension.sendRawButtonState(buttonCode.code(), false);
         }
     }
 
@@ -208,20 +221,45 @@ public class XServer {
 
     private Extension[] setupExtensions() {
         byte opcode = Extension.START_MAJOR_OPCODE;
-        return new Extension[]{
+        Extension[] extensions = new Extension[]{
             new BigReqExtension(this, opcode--),
             new MITSHMExtension(this, opcode--),
             new DRI3Extension(this, opcode--),
             new PresentExtension(this, opcode--),
             new SyncExtension(this, opcode--),
             new XComposite(this, opcode--),
-            new GLXExtension(this, opcode--)
+            new GLXExtension(this, opcode--),
+            new GenericEventExtension(this, opcode--),
+            new XInputExtension(this, opcode--)
         };
+
+        short nextEventId = 64;
+        short nextErrorId = 128;
+        for (Extension extension : extensions) {
+            byte eventCount = extension.getEventCount();
+            byte errorCount = extension.getErrorCount();
+            if (eventCount > 0) {
+                extension.setFirstEventId((byte)nextEventId);
+                nextEventId += eventCount;
+            }
+            if (errorCount > 0) {
+                extension.setFirstErrorId((byte)nextErrorId);
+                nextErrorId += errorCount;
+            }
+        }
+        return extensions;
     }
 
     public <T extends Extension> T getExtension(byte opcode) {
         int index = Extension.START_MAJOR_OPCODE - opcode;
         return (T)extensions[index];
+    }
+
+    public <T extends Extension> T getExtension(Class<T> extensionClass) {
+        for (Extension extension : extensions) {
+            if (extension.getClass() == extensionClass) return (T)extension;
+        }
+        return null;
     }
 
     public void debugPrint(String line) {

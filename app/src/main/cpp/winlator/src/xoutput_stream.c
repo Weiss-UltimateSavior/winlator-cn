@@ -131,12 +131,12 @@ Java_com_winlator_xconnector_XOutputStream_writeByteBuffer(JNIEnv *env, jclass o
 }
 
 JNIEXPORT jboolean JNICALL
-Java_com_winlator_xconnector_XOutputStream_sendData(JNIEnv *env, jclass obj, jlong nativePtr) {
+Java_com_winlator_xconnector_XOutputStream_sendData(jlong nativePtr) {
     return XOutputStream_send((XOutputStream*)nativePtr);
 }
 
 JNIEXPORT void JNICALL
-Java_com_winlator_xconnector_XOutputStream_destroy(JNIEnv *env, jclass obj, jlong nativePtr) {
+Java_com_winlator_xconnector_XOutputStream_destroy(jlong nativePtr) {
     XOutputStream_destroy((XOutputStream*)nativePtr);
 }
 

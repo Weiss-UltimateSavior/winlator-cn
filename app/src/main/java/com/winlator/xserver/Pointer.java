@@ -51,11 +51,21 @@ public class Pointer {
     }
 
     public short getClampedX() {
-        return (short)Mathf.clamp(x, 0, xServer.screenInfo.width -1);
+        return (short)Mathf.clamp(x, 0, xServer.screenInfo.width - 1);
     }
 
     public short getClampedY() {
-        return (short)Mathf.clamp(y, 0, xServer.screenInfo.height -1);
+        return (short)Mathf.clamp(y, 0, xServer.screenInfo.height - 1);
+    }
+
+    public void clampPosition() {
+        clampPosition(0.0125f);
+    }
+
+    public void clampPosition(float offscreenTolerance) {
+        short maxDistance = (short)(xServer.screenInfo.width * offscreenTolerance);
+        x = (short)Mathf.clamp(x, -maxDistance, (xServer.screenInfo.width - 1) + maxDistance);
+        y = (short)Mathf.clamp(y, -maxDistance, (xServer.screenInfo.height - 1) + maxDistance);
     }
 
     public void setPosition(int x, int y) {

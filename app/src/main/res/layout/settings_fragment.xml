@@ -286,13 +286,6 @@
                         android:text="@string/pause_on_background"
                         android:layout_marginTop="8dp" />
 
-                    <CheckBox
-                        android:id="@+id/CBKeepAlive"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="@string/keep_alive"
-                        android:layout_marginTop="8dp" />
-
                     <TextView
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
@@ -317,6 +310,31 @@
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:text="@string/use_android_clipboard_on_Wine"
+                        android:layout_marginTop="8dp" />
+
+                    <CheckBox
+                        android:id="@+id/CBEnableBackgroundProtection"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="8dp"
+                        android:text="@string/enable_background_protection"
+                        android:tooltipText="@string/enable_background_protection_tooltip" />
+
+                    <CheckBox
+                        android:id="@+id/CBEnableBackgroundWakelock"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="4dp"
+                        android:layout_marginStart="24dp"
+                        android:visibility="gone"
+                        android:text="@string/enable_background_wakelock"
+                        android:tooltipText="@string/enable_background_wakelock_tooltip" />
+
+                    <CheckBox
+                        android:id="@+id/CBSaveMemOnRunFromSteam"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="@string/save_mem_on_run_from_steam"
                         android:layout_marginTop="8dp" />
                 </LinearLayout>
 

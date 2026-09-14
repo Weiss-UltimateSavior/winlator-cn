@@ -9,7 +9,6 @@ import com.winlator.core.GPUHelper;
 import com.winlator.core.GeneralComponents;
 import com.winlator.core.KeyValueSet;
 import com.winlator.renderer.GPUImage;
-import com.winlator.renderer.Texture;
 import com.winlator.xconnector.ConnectedClient;
 import com.winlator.xconnector.ConnectionHandler;
 import com.winlator.xconnector.RequestHandler;
@@ -112,17 +111,9 @@ public class VortekRendererComponent extends EnvironmentComponent implements Con
     private long getWindowHardwareBuffer(int windowId, boolean useHALPixelFormatBGRA8888) {
         Window window = xServer.windowManager.getWindow(windowId);
         if (window != null) {
-            Drawable drawable = window.getContent();
-            final Texture texture = drawable.getTexture();
-
-            if (!(texture instanceof GPUImage)) {
-                xServer.getRenderer().xServerView.queueEvent(texture::destroy);
-                drawable.setTexture(new GPUImage(drawable, false, useHALPixelFormatBGRA8888));
-            }
-
-            return ((GPUImage)drawable.getTexture()).getHardwareBufferPtr();
+            GPUImage texture = GPUImage.createOrObtain(xServer, window.getContent(), false, useHALPixelFormatBGRA8888);
+            return texture.getHardwareBufferPtr();
         }
-
         return 0;
     }
 

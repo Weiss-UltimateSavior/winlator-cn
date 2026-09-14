@@ -1,6 +1,7 @@
 [steam.exe]
 BOX64_ENV=WINEARGS=-noshaders -nooverlay -no-browser -nocrashmonitor -no-shared-textures -cef-disable-gpu -cef-disable-gpu-compositing -cef-disable-gpu-sandbox -cef-disable-d3d11 -cef-disable-sandbox -no-cef-sandbox -cef-disable-seccomp-sandbox
 BOX64_ENV1=WINEDLLOVERRIDES=gameoverlayrenderer,gameoverlayrenderer64,gameoverlayui.exe,gameoverlayui64.exe,x86launcher.exe,x64launcher.exe,dxsetup.exe=d
+BOX64_ENV2=WINPREEXEC=winpreexec
 
 [steamwebhelper.exe]
 BOX64_DYNAREC_STRONGMEM=1
@@ -80,6 +81,26 @@ BOX64_DYNAREC_STRONGMEM=1
 BOX64_DYNAREC_STRONGMEM=1
 
 [BorderlandsPreSequel.exe]
+BOX64_DYNAREC_STRONGMEM=1
+
+[re2.exe]
+BOX64_DYNAREC_STRONGMEM=1
+BOX64_DYNAREC_WEAKBARRIER=1
+
+[re3.exe]
+BOX64_DYNAREC_STRONGMEM=1
+BOX64_DYNAREC_WEAKBARRIER=1
+
+[JustCause3.exe]
+BOX64_DYNAREC_STRONGMEM=1
+BOX64_DYNAREC_WEAKBARRIER=1
+
+[JustCause4.exe]
+BOX64_DYNAREC_STRONGMEM=1
+BOX64_DYNAREC_WEAKBARRIER=1
+BOX64_DYNAREC_DIRTY=2
+
+[Nino2.exe]
 BOX64_DYNAREC_STRONGMEM=1
 
 [CoJGunslinger.exe]

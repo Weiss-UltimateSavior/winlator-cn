@@ -2,6 +2,7 @@ package com.winlator.renderer;
 
 import android.opengl.GLES11Ext;
 import android.opengl.GLES20;
+import android.opengl.GLES32;
 
 import com.winlator.xserver.Drawable;
 
@@ -135,6 +136,17 @@ public class Texture {
 
     public int getTextureId() {
         return textureId;
+    }
+
+    public void copyFromSource(Texture source) {
+        if (!source.isAllocated()) source.allocateTexture(source.owner.width, source.owner.height, null);
+        if (!this.isAllocated()) this.allocateTexture(source.owner.width, source.owner.height, null);
+        GLES32.glCopyImageSubData(
+            source.textureId, GLES20.GL_TEXTURE_2D, 0, 0, 0, 0,
+            this.textureId, GLES20.GL_TEXTURE_2D, 0, 0, 0, 0,
+            source.owner.width, source.owner.height, 1
+        );
+        GLES20.glFlush();
     }
 
     public void copyFromReadBuffer(short width, short height) {

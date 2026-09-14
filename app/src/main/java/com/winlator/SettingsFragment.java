@@ -10,8 +10,6 @@ import android.net.Uri;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
-import android.os.PowerManager;
-import android.provider.Settings;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
@@ -22,6 +20,12 @@ import android.widget.LinearLayout;
 import android.widget.RadioGroup;
 import android.widget.Spinner;
 import android.widget.TextView;
+
+import android.Manifest;
+import android.content.pm.PackageManager;
+import android.os.Build;
+import androidx.core.content.ContextCompat;
+import android.app.NotificationManager;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
@@ -50,6 +54,7 @@ import com.winlator.core.GeneralComponents;
 import com.winlator.core.StringUtils;
 import com.winlator.core.WineInfo;
 import com.winlator.core.WineInstaller;
+import com.winlator.services.NotificationUtils;
 import com.winlator.widget.ColorPickerView;
 import com.winlator.widget.LogView;
 import com.winlator.widget.SeekBar;
@@ -74,22 +79,6 @@ public class SettingsFragment extends Fragment {
     private PreloaderDialog preloaderDialog;
     private SharedPreferences preferences;
     private boolean midiDeviceCallbackRegistered = false;
-    private boolean pendingBatteryExemption = false;
-
-    @Override
-    public void onResume() {
-        super.onResume();
-        // 从系统"电池优化"设置页返回：用户允许才勾选并保存，拒绝则保持不勾选
-        if (pendingBatteryExemption) {
-            pendingBatteryExemption = false;
-            PowerManager powerManager = (PowerManager)getContext().getSystemService(Context.POWER_SERVICE);
-            View view = getView();
-            if (view != null && powerManager.isIgnoringBatteryOptimizations(getContext().getPackageName())) {
-                CheckBox cbKeepAlive = view.findViewById(R.id.CBKeepAlive);
-                cbKeepAlive.setChecked(true);
-            }
-        }
-    }
 
     @Override
     public void onCreate(@Nullable Bundle savedInstanceState) {
@@ -152,29 +141,6 @@ public class SettingsFragment extends Fragment {
         final CheckBox cbPauseOnBackground = view.findViewById(R.id.CBPauseOnBackground);
         cbPauseOnBackground.setChecked(preferences.getBoolean("pause_on_background", true));
 
-        final CheckBox cbKeepAlive = view.findViewById(R.id.CBKeepAlive);
-        cbKeepAlive.setChecked(preferences.getBoolean("keep_alive", false));
-        cbKeepAlive.setOnCheckedChangeListener((buttonView, isChecked) -> {
-            if (isChecked) {
-                PowerManager powerManager = (PowerManager)context.getSystemService(Context.POWER_SERVICE);
-                if (powerManager.isIgnoringBatteryOptimizations(context.getPackageName())) {
-                    preferences.edit().putBoolean("keep_alive", true).apply();
-                }
-                else {
-                    // 未豁免：先不勾选，跳系统设置页，返回时确认允许后才勾选
-                    cbKeepAlive.setChecked(false);
-                    pendingBatteryExemption = true;
-                    Intent intent = new Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS);
-                    intent.setData(Uri.parse("package:"+context.getPackageName()));
-                    context.startActivity(intent);
-                }
-            }
-            else {
-                pendingBatteryExemption = false;
-                preferences.edit().putBoolean("keep_alive", false).apply();
-            }
-        });
-
         final Spinner sClipboardCharset = view.findViewById(R.id.SClipboardCharset);
         String clipboardCharset = preferences.getString("clipboard_charset", "GBK");
         String[] charsetEntries = getResources().getStringArray(R.array.clipboard_charset_entries);
@@ -187,6 +153,35 @@ public class SettingsFragment extends Fragment {
 
         final CheckBox cbChineseInputPaste = view.findViewById(R.id.CBChineseInputPaste);
         cbChineseInputPaste.setChecked(preferences.getBoolean("chinese_input_paste_mode", true));
+
+        final CheckBox cbEnableBackgroundWakelock = view.findViewById(R.id.CBEnableBackgroundWakelock);
+        cbEnableBackgroundWakelock.setChecked(preferences.getBoolean("enable_background_wakelock", false));
+
+        final CheckBox cbEnableBackgroundProtection = view.findViewById(R.id.CBEnableBackgroundProtection);
+        cbEnableBackgroundProtection.setChecked(preferences.getBoolean("enable_background_protection", false));
+        cbEnableBackgroundProtection.setOnCheckedChangeListener((buttonView, isChecked) -> {
+            cbEnableBackgroundWakelock.setVisibility(isChecked ? View.VISIBLE : View.GONE);
+            if (!isChecked) cbEnableBackgroundWakelock.setChecked(false);
+
+            if (isChecked && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                if (ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+                    // We force a temporary notification channel so that the notification permission request window appears on APIs 33+
+                    String tempId = "permission_trigger";
+                    NotificationUtils.getInstance(getContext().getApplicationContext()).createNotificationChannel(context, tempId, "Permission Trigger", NotificationManager.IMPORTANCE_LOW);
+//                    NotificationUtils.getInstance(getContext().getApplicationContext()).createNotificationChannel(); // Create the foreground notification channel.
+
+                    // And delete the channel after 1 second.
+                    new Handler(Looper.getMainLooper()).postDelayed(() -> {
+                        NotificationManager nm = (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
+                        if (nm != null) nm.deleteNotificationChannel(tempId);
+                    }, 1000);
+                }
+            }
+        });
+        cbEnableBackgroundWakelock.setVisibility(cbEnableBackgroundProtection.isChecked() ? View.VISIBLE : View.GONE);
+
+        final CheckBox cbSaveMemOnRunFromSteam = view.findViewById(R.id.CBSaveMemOnRunFromSteam);
+        cbSaveMemOnRunFromSteam.setChecked(preferences.getBoolean("save_mem_on_run_from_steam", true));
 
         final CheckBox cbEnableWineDebug = view.findViewById(R.id.CBEnableWineDebug);
         cbEnableWineDebug.setChecked(preferences.getBoolean("enable_wine_debug", false));
@@ -259,9 +254,11 @@ public class SettingsFragment extends Fragment {
             editor.putBoolean("open_android_browser_from_wine", cbOpenAndroidBrowserFromWine.isChecked());
             editor.putBoolean("use_android_clipboard_on_wine", cbUseAndroidClipboardOnWine.isChecked());
             editor.putBoolean("pause_on_background", cbPauseOnBackground.isChecked());
-            editor.putBoolean("keep_alive", cbKeepAlive.isChecked());
             editor.putString("clipboard_charset", sClipboardCharset.getSelectedItem().toString());
             editor.putBoolean("chinese_input_paste_mode", cbChineseInputPaste.isChecked());
+            editor.putBoolean("enable_background_protection", cbEnableBackgroundProtection.isChecked());
+            editor.putBoolean("enable_background_wakelock", cbEnableBackgroundWakelock.isChecked());
+            editor.putBoolean("save_mem_on_run_from_steam", cbSaveMemOnRunFromSteam.isChecked());
             putGamepadPlayerConfigs(view, editor);
 
             GamepadHandler.GamepadModel gamepadModel = (GamepadHandler.GamepadModel)sGamepadModel.getAdapter().getItem(sGamepadModel.getSelectedItemPosition());

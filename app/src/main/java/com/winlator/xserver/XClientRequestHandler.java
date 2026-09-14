@@ -112,7 +112,7 @@ public class XClientRequestHandler implements RequestHandler {
             }
 
             short additionalDataLength = (short)((outputStream.length() - 8) / 4);
-            outputStream.writeAt(6, ByteBuffer.allocate(2).order(ByteOrder.LITTLE_ENDIAN).putShort(additionalDataLength).array());
+            outputStream.writeShortAt(6, additionalDataLength);
         }
     }
 

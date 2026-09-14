@@ -128,3 +128,43 @@ JNIEXPORT void JNICALL
 Java_com_winlator_core_GPUHelper_setGlobalEGLContext(JNIEnv *env, jclass obj) {
     globalEGLContext = eglGetCurrentContext();
 }
+
+JNIEXPORT jlong JNICALL
+Java_com_winlator_core_GPUHelper_createOffscreenEGLContext(JNIEnv *env, jclass obj,
+                                                           jboolean sharedContext) {
+    static const EGLint confAttribList[] = {
+        EGL_RENDERABLE_TYPE, EGL_OPENGL_ES3_BIT,
+        EGL_NONE,
+    };
+    static const EGLint ctxAttribList[] = {
+        EGL_CONTEXT_CLIENT_VERSION, 3,
+        EGL_NONE
+    };
+    EGLBoolean success;
+
+    EGLDisplay eglDisplay = eglGetDisplay(EGL_DEFAULT_DISPLAY);
+    if (!eglDisplay) return 0;
+
+    EGLint major, minor;
+    success = eglInitialize(eglDisplay, &major, &minor);
+    if (!success) return 0;
+
+    int numConfigs;
+    EGLConfig eglConfig;
+    success = eglChooseConfig(eglDisplay, confAttribList, &eglConfig, 1, &numConfigs);
+    if (!success || numConfigs != 1) return 0;
+
+    EGLContext eglContext = eglCreateContext(eglDisplay, eglConfig, sharedContext ? globalEGLContext : NULL, ctxAttribList);
+
+    eglMakeCurrent(eglDisplay, EGL_NO_SURFACE, EGL_NO_SURFACE, eglContext);
+    return (jlong)eglContext;
+}
+
+JNIEXPORT void JNICALL
+Java_com_winlator_core_GPUHelper_destroyOffscreenEGLContext(JNIEnv *env, jclass obj,
+                                                            jlong contextPtr) {
+    if (contextPtr == 0) return;
+    EGLDisplay eglDisplay = eglGetDisplay(EGL_DEFAULT_DISPLAY);
+    eglMakeCurrent(eglDisplay, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
+    eglDestroyContext(eglDisplay, (EGLContext)contextPtr);
+}

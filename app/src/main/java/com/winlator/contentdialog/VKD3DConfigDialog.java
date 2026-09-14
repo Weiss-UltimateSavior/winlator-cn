@@ -13,7 +13,7 @@ import com.winlator.core.KeyValueSet;
 import com.winlator.xenvironment.RootFS;
 
 public class VKD3DConfigDialog extends ContentDialog {
-    public static final String DEFAULT_FEATURE_LEVEL = "12.2";
+    public static final String DEFAULT_FEATURE_LEVEL = "12.1";
 
     public VKD3DConfigDialog(final View anchor) {
         super(anchor.getContext(), R.layout.vkd3d_config_dialog);
@@ -41,6 +41,7 @@ public class VKD3DConfigDialog extends ContentDialog {
     public static void setEnvVars(KeyValueSet config, EnvVars envVars) {
         envVars.put("DXVK_LOG_LEVEL", "none");
         envVars.put("VKD3D_DEBUG", "none");
+        envVars.put("VKD3D_CONFIG", "skip_application_workarounds,no_upload_hvv,nodxr,no_staggered_submit");
         envVars.put("DXVK_STATE_CACHE_PATH", RootFS.getDosUserCachePath());
         envVars.put("VKD3D_FEATURE_LEVEL", config.get("featureLevel", VKD3DConfigDialog.DEFAULT_FEATURE_LEVEL).replace(".", "_"));
         envVars.put("VKD3D_SHADER_CACHE_PATH", RootFS.getDosUserCachePath());

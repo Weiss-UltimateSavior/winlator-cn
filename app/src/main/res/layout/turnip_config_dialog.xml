@@ -1,8 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
-    android:layout_height="match_parent"
-    android:orientation="vertical">
+    android:layout_height="200dp">
 
     <LinearLayout
         android:layout_width="300dp"
@@ -55,17 +54,22 @@
             android:id="@+id/SMaxDeviceMemory"
             android:entries="@array/max_device_memory_entries" />
 
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/present_mode" />
+
+        <Spinner
+            style="@style/ComboBox"
+            android:id="@+id/SPresentMode"
+            android:layout_width="match_parent"
+            android:entries="@array/present_mode_entries" />
+
         <CheckBox
-            android:id="@+id/CBUseHWBuf"
+            android:id="@+id/CBDirectRendering"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:text="@string/enable_direct_rendering"
             android:layout_marginTop="8dp" />
-
-        <CheckBox
-            android:id="@+id/CBForceWaitForFences"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="@string/sync_every_frame" />
     </LinearLayout>
-</LinearLayout>
+</ScrollView>

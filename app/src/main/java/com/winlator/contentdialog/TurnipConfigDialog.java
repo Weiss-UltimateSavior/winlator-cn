@@ -15,6 +15,8 @@ import com.winlator.core.KeyValueSet;
 import com.winlator.core.StringUtils;
 
 public class TurnipConfigDialog extends ContentDialog {
+    private static final GPUHelper.VkPresentMode DEFAULT_PRESENT_MODE = GPUHelper.VkPresentMode.MAILBOX;
+
     public TurnipConfigDialog(final View anchor) {
         super(anchor.getContext(), R.layout.turnip_config_dialog);
         Context context = anchor.getContext();
@@ -23,13 +25,13 @@ public class TurnipConfigDialog extends ContentDialog {
 
         final Spinner sVersion = findViewById(R.id.SVersion);
         final Spinner sMaxDeviceMemory = findViewById(R.id.SMaxDeviceMemory);
-        final CheckBox cbUseHWBuf = findViewById(R.id.CBUseHWBuf);
-        final CheckBox cbForceWaitForFences = findViewById(R.id.CBForceWaitForFences);
+        final CheckBox cbDirectRendering = findViewById(R.id.CBDirectRendering);
+        final Spinner sPresentMode = findViewById(R.id.SPresentMode);
 
         KeyValueSet config = new KeyValueSet(anchor.getTag());
-        cbUseHWBuf.setChecked(config.getBoolean("useHWBuf", true));
-        cbForceWaitForFences.setChecked(config.getBoolean("forceWaitForFences"));
+        cbDirectRendering.setChecked(config.getBoolean("directRendering", true));
         AppUtils.setSpinnerSelectionFromMemorySize(sMaxDeviceMemory, config.get("maxDeviceMemory", "0"));
+        sPresentMode.setSelection(config.getInt("presentMode", DEFAULT_PRESENT_MODE.ordinal()), false);
 
         String version = config.get("version");
         GeneralComponents.initViews(GeneralComponents.Type.TURNIP, findViewById(R.id.TurnipToolbox), sVersion, version, DefaultVersion.TURNIP);
@@ -38,8 +40,8 @@ public class TurnipConfigDialog extends ContentDialog {
             KeyValueSet newConfig = new KeyValueSet();
             newConfig.put("version", StringUtils.parseNumber(sVersion.getSelectedItem()));
             newConfig.put("maxDeviceMemory", StringUtils.parseMemorySize(sMaxDeviceMemory.getSelectedItem()));
-            newConfig.put("useHWBuf", cbUseHWBuf.isChecked() ? "1" : "0");
-            newConfig.put("forceWaitForFences", cbForceWaitForFences.isChecked() ? "1" : "0");
+            newConfig.put("directRendering", cbDirectRendering.isChecked() ? "1" : "0");
+            newConfig.put("presentMode", sPresentMode.getSelectedItemPosition());
             anchor.setTag(newConfig.toString());
         });
     }
@@ -57,8 +59,11 @@ public class TurnipConfigDialog extends ContentDialog {
     public static void setEnvVars(Context context, KeyValueSet config, EnvVars envVars) {
         String maxDeviceMemory = config.get("maxDeviceMemory", "0");
         if (!maxDeviceMemory.equals("0")) envVars.put("TU_OVERRIDE_HEAP_SIZE", maxDeviceMemory);
-        if (config.getBoolean("useHWBuf", true)) envVars.put("MESA_VK_WSI_USE_HWBUF", "1");
-        if (config.getBoolean("forceWaitForFences")) envVars.put("MESA_VK_WSI_FORCE_WAIT_FOR_FENCES", "1");
+        if (config.getBoolean("directRendering", true)) envVars.put("MESA_VK_WSI_NATIVE_MEM_IMPORTED", "1");
+
+        int presentModeIdx = config.getInt("presentMode", DEFAULT_PRESENT_MODE.ordinal());
+        String presentMode = GPUHelper.VkPresentMode.values()[presentModeIdx].value();
+        envVars.put("MESA_VK_WSI_PRESENT_MODE", presentMode);
 
         String tuDebug = envVars.get("TU_DEBUG");
         if (isForceSYSMEM(context) && !tuDebug.contains("sysmem")) {
@@ -67,5 +72,6 @@ public class TurnipConfigDialog extends ContentDialog {
         else if (isForceGMEM(context) && !tuDebug.contains("gmem")) {
             envVars.put("TU_DEBUG", (!tuDebug.isEmpty() ? tuDebug+"," : "")+"gmem");
         }
+        envVars.put("TU_DEBUG", (!tuDebug.isEmpty() ? tuDebug+"," : "")+"deck_emu");
     }
 }

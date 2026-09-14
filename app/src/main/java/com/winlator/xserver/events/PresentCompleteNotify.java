@@ -8,20 +8,21 @@ import com.winlator.xserver.extensions.PresentExtension;
 import java.io.IOException;
 
 public class PresentCompleteNotify extends Event {
+    public static final byte PRESENT_COMPLETE = 1;
     private final PresentExtension presentExtension;
     private final int eventId;
-    private final Window window;
+    private final int windowId;
     private final int serial;
-    private final PresentExtension.Kind kind;
-    private final PresentExtension.Mode mode;
+    private final PresentExtension.CompleteKind kind;
+    private final PresentExtension.CompleteMode mode;
     private final long ust;
     private final long msc;
 
-    public PresentCompleteNotify(PresentExtension presentExtension, int eventId, Window window, int serial, PresentExtension.Kind kind, PresentExtension.Mode mode, long ust, long msc) {
-        super(35);
+    public PresentCompleteNotify(PresentExtension presentExtension, int eventId, Window window, int serial, PresentExtension.CompleteKind kind, PresentExtension.CompleteMode mode, long ust, long msc) {
+        super(GENERIC_EVENT_ID);
         this.presentExtension = presentExtension;
         this.eventId = eventId;
-        this.window = window;
+        this.windowId = window.id;
         this.serial = serial;
         this.kind = kind;
         this.mode = mode;
@@ -36,22 +37,14 @@ public class PresentCompleteNotify extends Event {
             outputStream.writeByte(presentExtension.getMajorOpcode());
             outputStream.writeShort(sequenceNumber);
             outputStream.writeInt(2);
-            outputStream.writeShort(getEventType());
+            outputStream.writeShort(PRESENT_COMPLETE);
             outputStream.writeByte((byte)kind.ordinal());
             outputStream.writeByte((byte)mode.ordinal());
             outputStream.writeInt(eventId);
-            outputStream.writeInt(window.id);
+            outputStream.writeInt(windowId);
             outputStream.writeInt(serial);
             outputStream.writeLong(ust);
             outputStream.writeLong(msc);
         }
-    }
-
-    public static short getEventType() {
-        return 1;
-    }
-
-    public static int getEventMask() {
-        return 1<<getEventType();
     }
 }
