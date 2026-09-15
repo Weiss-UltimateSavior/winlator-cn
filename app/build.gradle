@@ -21,18 +21,31 @@ android {
                 abiFilters 'arm64-v8a'
             }
         }
+
+        release {
+            minifyEnabled true
+            proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+
+            ndk {
+                abiFilters 'arm64-v8a'
+            }
+        }
     }
 
     lintOptions {
         checkReleaseBuilds false
     }
 
-    ndkVersion '24.0.8215888'
+    // 「仅编译 Java」的 CI 流程会先删掉 app/src/main/cpp，再传 -PskipNative 跳过下面这段
+    // 原生构建配置。本地构建与「含 C 编译」的 CI 流程不传该属性，行为完全不变。
+    if (!project.hasProperty('skipNative')) {
+        ndkVersion '24.0.8215888'
 
-    externalNativeBuild {
-        cmake {
-            version '3.22.1'
-            path 'src/main/cpp/CMakeLists.txt'
+        externalNativeBuild {
+            cmake {
+                version '3.22.1'
+                path 'src/main/cpp/CMakeLists.txt'
+            }
         }
     }
 

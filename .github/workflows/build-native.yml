@@ -13,38 +13,13 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           lfs: false
           fetch-depth: 1
 
       - name: Remove assets
         run: rm -rf app/src/main/assets
-
-      - name: Patch build.gradle (add release buildType)
-        run: |
-          python3 << 'EOF'
-          with open('app/build.gradle', 'r') as f:
-              result = f.readlines()
-          # Find buildTypes block and add release after debug block ends
-          in_build_types = False
-          brace_count = 0
-          for i, line in enumerate(result):
-              if 'buildTypes' in line and '{' in line:
-                  in_build_types = True
-                  brace_count = 1
-                  continue
-              if in_build_types:
-                  brace_count += line.count('{')
-                  brace_count -= line.count('}')
-                  if brace_count == 1 and '}' in line and 'debug' not in line:
-                      result.insert(i+1, "        release {\n            minifyEnabled true\n            proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'\n            ndk {\n                abiFilters 'arm64-v8a'\n            }\n        }\n")
-                      break
-                  if brace_count == 0:
-                      break
-          with open('app/build.gradle', 'w') as f:
-              f.writelines(result)
-          EOF
 
       - name: Set up JDK
         uses: actions/setup-java@v5
@@ -54,12 +29,15 @@ jobs:
           cache: 'gradle'
 
       - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
+        uses: android-actions/setup-android@v4
         with:
           # 不能用该 action 的默认值 "tools platform-tools"：Google 已将遗留的
           # tools(Android SDK Tools) 包从 SDK 仓库下架，sdkmanager tools 会报
           # "Failed to find package 'tools'" 并让本步骤以退出码 1 失败，
           # 整个 job 在 Gradle 启动前就中止。
+          # 已核对 v4 的 action.yml：packages 默认值仍是 "tools platform-tools"
+          # (v3 -> v4 只改了 node20 -> node24 与 cmdline-tools 默认版本号)，
+          # 所以升级之后这条覆盖依然必须保留。
           packages: platform-tools
 
       - name: Install NDK and CMake

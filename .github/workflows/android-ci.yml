@@ -14,7 +14,7 @@ jobs:
     
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           lfs: false # 彻底禁止下载任何LFS文件
           fetch-depth: 1 # 只拉取最新一次提交
@@ -22,57 +22,11 @@ jobs:
       - name: Remove assets
         run: rm -rf app/src/main/assets
 
-      - name: Patch build.gradle
-        run: |
-          rm -rf app/src/main/cpp
-          python3 << 'EOF'
-          with open('app/build.gradle', 'r') as f:
-              lines = f.readlines()
-          result = []
-          skip_until_brace = 0
-          in_external_native = False
-          for line in lines:
-              if 'externalNativeBuild' in line and '{' in line:
-                  in_external_native = True
-                  skip_until_brace = 1
-                  continue
-              if in_external_native:
-                  skip_until_brace += line.count('{')
-                  skip_until_brace -= line.count('}')
-                  if skip_until_brace <= 0:
-                      in_external_native = False
-                  continue
-              if 'ndkVersion' in line:
-                  continue
-              result.append(line)
-          # Add packagingOptions after lintOptions
-          for i, line in enumerate(result):
-              if 'checkReleaseBuilds false' in line:
-                  for j in range(i+1, len(result)):
-                      if '}' in result[j]:
-                          result.insert(j+1, "\n    packagingOptions {\n        pickFirst 'lib/arm64-v8a/libFLAC.so'\n    }\n")
-                          break
-                  break
-          # Add release buildType after debug block (find buildTypes and track braces)
-          in_build_types = False
-          brace_count = 0
-          debug_ended = False
-          for i, line in enumerate(result):
-              if 'buildTypes' in line and '{' in line:
-                  in_build_types = True
-                  brace_count = 1
-                  continue
-              if in_build_types:
-                  brace_count += line.count('{')
-                  brace_count -= line.count('}')
-                  if brace_count == 1 and '}' in line:
-                      result.insert(i+1, "        release {\n            minifyEnabled true\n            proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'\n            ndk {\n                abiFilters 'arm64-v8a'\n            }\n        }\n")
-                      break
-                  if brace_count == 0:
-                      break
-          with open('app/build.gradle', 'w') as f:
-              f.writelines(result)
-          EOF
+      - name: Remove native sources
+        # 配合下面 assembleRelease 的 -PskipNative：本流程不编译任何 C/C++。
+        # 删掉 cpp 还能在 -PskipNative 万一被漏掉时立刻构建失败，
+        # 而不是悄悄退回去做一次完整的原生编译。
+        run: rm -rf app/src/main/cpp
 
       - name: Set up JDK
         uses: actions/setup-java@v5
@@ -82,12 +36,15 @@ jobs:
           cache: 'gradle'
       
       - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
+        uses: android-actions/setup-android@v4
         with:
           # 不能用该 action 的默认值 "tools platform-tools"：Google 已将遗留的
           # tools(Android SDK Tools) 包从 SDK 仓库下架，sdkmanager tools 会报
           # "Failed to find package 'tools'" 并让本步骤以退出码 1 失败，
           # 整个 job 在 Gradle 启动前就中止。
+          # 已核对 v4 的 action.yml：packages 默认值仍是 "tools platform-tools"
+          # (v3 -> v4 只改了 node20 -> node24 与 cmdline-tools 默认版本号)，
+          # 所以升级之后这条覆盖依然必须保留。
           packages: platform-tools
 
       - name: Create debug keystore
@@ -101,7 +58,7 @@ jobs:
       - name: Build release APK
         run: |
           chmod +x gradlew
-          ./gradlew assembleRelease --no-daemon \
+          ./gradlew assembleRelease --no-daemon -PskipNative \
             -Pandroid.injected.signing.store.file=$PWD/debug.keystore \
             -Pandroid.injected.signing.store.password=android \
             -Pandroid.injected.signing.key.alias=androiddebugkey \
