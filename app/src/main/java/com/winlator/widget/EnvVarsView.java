@@ -50,7 +50,6 @@ public class EnvVarsView extends FrameLayout {
         {"BOX64_MMAP32", "CHECKBOX", "0", "1"},
         {"DRAW_USE_LLVM", "CHECKBOX", "0", "1"},
         {"MANGOHUD", "CHECKBOX", "0", "1"},
-        {"MANGOHUD_CONFIGFILE", "SELECT", "/data/user/0/com.winlator/files/rootfs/home/mangohud1.conf", "/data/user/0/com.winlator/files/rootfs/home/mangohud2.conf", "/data/user/0/com.winlator/files/rootfs/home/mangohud3.conf", "/data/user/0/com.winlator/files/rootfs/home/mangohud4.conf"},
         {"MESA_EXTENSION_MAX_YEAR", "SELECT", "2001", "2003", "2008", "2015", "2025"},
         {"PULSE_LATENCY_MSEC", "NUMBER"},
     };

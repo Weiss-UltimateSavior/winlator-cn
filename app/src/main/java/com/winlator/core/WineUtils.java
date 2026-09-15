@@ -44,7 +44,7 @@ public abstract class WineUtils {
         for (Drive drive : container.drivesIterator()) {
             File linkTarget = new File(drive.path);
             String path = linkTarget.getAbsolutePath();
-            if (!linkTarget.isDirectory() && path.startsWith(AppUtils.INTERNAL_STORAGE)) {
+            if (!linkTarget.isDirectory() && path.startsWith(AppUtils.getInternalStorage())) {
                 linkTarget.mkdirs();
                 FileUtils.chmod(linkTarget, 0771);
             }

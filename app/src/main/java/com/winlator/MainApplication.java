@@ -13,6 +13,7 @@ import android.widget.Toast;
 
 import androidx.preference.PreferenceManager;
 
+import com.winlator.core.AppUtils;
 import com.winlator.core.PatchUtils;
 
 import java.io.BufferedReader;
@@ -80,6 +81,8 @@ public class MainApplication extends Application {
     public void onCreate() {
         super.onCreate();
         Thread.setDefaultUncaughtExceptionHandler(new CrashHandler(this, Thread.getDefaultUncaughtExceptionHandler()));
+        // 先注入实际包名：容器默认 E: 盘路径按包名拼接，MT 改包共存后不能再用 com.winlator 的硬编码路径
+        AppUtils.init(this);
         // MT 改包共存后 getPackageName() 为新包名，PatchUtils 据此决定是否替换解压产物中的宿主路径
         // (包名仍为原包名 com.winlator 时不启用，原版 APK 行为完全不变)
         File dataDir = getDataDir();
