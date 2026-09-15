@@ -24,6 +24,8 @@ import android.widget.TextView;
 import android.Manifest;
 import android.content.pm.PackageManager;
 import android.os.Build;
+import android.os.PowerManager;
+import android.provider.Settings;
 import androidx.core.content.ContextCompat;
 import android.app.NotificationManager;
 
@@ -79,6 +81,29 @@ public class SettingsFragment extends Fragment {
     private PreloaderDialog preloaderDialog;
     private SharedPreferences preferences;
     private boolean midiDeviceCallbackRegistered = false;
+    // 用户开启"后台保护"但尚未加入电池优化白名单时置位，
+    // 用于从系统设置页返回后复查：未获豁免则撤销勾选
+    private boolean pendingBatteryExemption = false;
+
+    @Override
+    public void onResume() {
+        super.onResume();
+        // 从系统"电池优化"设置页返回：已获豁免则保持勾选，未获则撤销
+        if (!pendingBatteryExemption) return;
+        pendingBatteryExemption = false;
+
+        View view = getView();
+        if (view == null) return;
+        PowerManager powerManager = (PowerManager)requireContext().getSystemService(Context.POWER_SERVICE);
+        if (powerManager == null) return;
+
+        if (powerManager.isIgnoringBatteryOptimizations(requireContext().getPackageName())) return;
+
+        // 用户在系统页拒绝：撤销勾选（只改 UI，不落盘，本页统一由 BTConfirm 保存）。
+        // 标志已在上方清除，这里的 setChecked 重入监听器时不会影响判定。
+        CheckBox cbEnableBackgroundProtection = view.findViewById(R.id.CBEnableBackgroundProtection);
+        cbEnableBackgroundProtection.setChecked(false);
+    }
 
     @Override
     public void onCreate(@Nullable Bundle savedInstanceState) {
@@ -163,7 +188,12 @@ public class SettingsFragment extends Fragment {
             cbEnableBackgroundWakelock.setVisibility(isChecked ? View.VISIBLE : View.GONE);
             if (!isChecked) cbEnableBackgroundWakelock.setChecked(false);
 
-            if (isChecked && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            if (!isChecked) {
+                pendingBatteryExemption = false;
+                return;
+            }
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 if (ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
                     // We force a temporary notification channel so that the notification permission request window appears on APIs 33+
                     String tempId = "permission_trigger";
@@ -175,6 +205,23 @@ public class SettingsFragment extends Fragment {
                         NotificationManager nm = (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
                         if (nm != null) nm.deleteNotificationChannel(tempId);
                     }, 1000);
+                }
+            }
+
+            // 后台保活的关键是加入电池优化白名单。未加入则跳系统设置页，
+            // 勾选状态先保留，返回后由 onResume() 决定保留还是撤销。
+            // 放在通知权限触发之后：跳走会让本监听器不再重入，先做需要前台的那一步。
+            PowerManager powerManager = (PowerManager)context.getSystemService(Context.POWER_SERVICE);
+            if (powerManager != null && !powerManager.isIgnoringBatteryOptimizations(context.getPackageName())) {
+                pendingBatteryExemption = true;
+                try {
+                    Intent intent = new Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS);
+                    intent.setData(Uri.parse("package:"+context.getPackageName()));
+                    context.startActivity(intent);
+                }
+                catch (Exception e) {
+                    // 少数 ROM 无此系统页面：不阻断用户，保持勾选
+                    pendingBatteryExemption = false;
                 }
             }
         });
