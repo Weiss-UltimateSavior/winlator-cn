@@ -473,6 +473,70 @@ void gd_handle_glCompressedTexImage2D(GLContext* context) {
     GLint border = ArrayBuffer_getInt(&context->inputBuffer);
     GLint imageSize = ArrayBuffer_getInt(&context->inputBuffer);
 
+    target = parseTexTarget(target);
+    GLTexture* texture = GLTexture_getBound(target);
+
+    /* 透传判定：驱动支持 S3TC + 格式在白名单内 + 该纹理未要求自动生成 mip。
+       GLES 对压缩纹理调 glGenerateMipmap 是 INVALID_OPERATION，会静默丢掉整条 mip 链
+       （远处闪烁/摩尔纹，且 min filter 退化反而增大采样带宽），故这类纹理必须留在 CPU
+       解压路径。 */
+    bool useNative = false;
+    if (texture && imageSize > 0 && isCompressedFormat(internalformat) && GLRenderer_isS3TCPassthroughSupported()) {
+        if (texture->generateMipmap) {
+            /* generateMipmap 可能在首次压缩上传之后才被 glEnable 式地打开，此时纹理已被
+               锁定为原生压缩。要求自动生成 mip 时 guest 只上传 level 0，不存在 level 乱序
+               问题，故可安全地退出透传并清掉已有副本。 */
+            if (texture->compressedNative) GLTexture_clearCompressedLevels(texture);
+            texture->compressedModeDecided = true;
+            texture->compressedNative = false;
+        }
+        else if (!texture->compressedModeDecided) {
+            /* 首次上传时把判定锁定到整张纹理：同一张 GL 纹理混用压缩与非压缩 level 在
+               GLES 下非法，而 level 未必按 0→N 的顺序上传。 */
+            texture->compressedModeDecided = true;
+            texture->compressedNative = true;
+        }
+        useNative = texture->compressedNative;
+    }
+
+    if (useNative) {
+        /* 保存副本前校验 imageSize：BCDecoder_decode 会无条件按 ceil(w/4)*ceil(h/4)*blockSize
+           读取源缓冲，若副本按偏小的 imageSize 分配，之后 glGetTexImage 解压时会堆越界读
+           （旧路径的源是 64MB ring buffer，越界仍落在映射内存内，故此前不暴露）。
+           校验不通过时仍执行 GL 上传——尺寸不合法驱动自会按 INVALID_VALUE 拒绝——只是
+           不保存副本，让回读返回空数据而不是读越界。
+           注意 level 参数必须传 0：这里的 width/height 已经是该 level 的尺寸，而
+           getCompressedImageSize 内部还会做一次 >> level，传 level 会双重移位把所需字节数
+           算小 4^level 倍。（gl_renderer.c 里的调用点传的是 texture->width/height，那是
+           level-0 尺寸，所以才配 level 使用。） */
+        bool canStoreCopy = imageSize >= getCompressedImageSize(internalformat, width, height, 0);
+
+        GLBuffer* pixelUnpackBuffer = GLBuffer_getBound(GL_PIXEL_UNPACK_BUFFER);
+        if (pixelUnpackBuffer) {
+            uint64_t pointer = ArrayBuffer_getInt(&context->inputBuffer);
+            void* compressedData = pixelUnpackBuffer->mappedData + pointer;
+            glCompressedTexImage2D(target, level, internalformat, width, height, border, imageSize, compressedData);
+            if (canStoreCopy) GLTexture_setCompressedLevel(texture, level, compressedData, imageSize);
+            gl_send(context->clientRing, REQUEST_CODE_GL_COMPRESSED_TEX_IMAGE2D, NULL, 0);
+        }
+        else {
+            void* compressedData = NULL;
+            RING_READ_BEGIN(context->serverRing, compressedData, imageSize);
+            glCompressedTexImage2D(target, level, internalformat, width, height, border, imageSize, compressedData);
+            /* 必须在 RING_READ_END 之前保存副本：数据可能直接指向 ring 映射内存，
+               RING_READ_END 会推进 head 并释放跨环绕时的临时缓冲。 */
+            if (canStoreCopy) GLTexture_setCompressedLevel(texture, level, compressedData, imageSize);
+            RING_READ_END(context->serverRing);
+        }
+
+        if (level == 0) {
+            texture->width = width;
+            texture->height = height;
+            texture->originFormat = internalformat;
+        }
+        return;
+    }
+
     void* decompressedData = NULL;
     if (imageSize > 0) {
         GLBuffer* pixelUnpackBuffer = GLBuffer_getBound(GL_PIXEL_UNPACK_BUFFER);
@@ -489,16 +553,59 @@ void gd_handle_glCompressedTexImage2D(GLContext* context) {
         }
     }
 
-    target = parseTexTarget(target);
     glTexImage2D(target, level, GL_BGRA, width, height, border, GL_BGRA, GL_UNSIGNED_BYTE, decompressedData);
     MEMFREE(decompressedData);
 
-    GLTexture* texture = GLTexture_getBound(target);
     if (texture && level == 0) {
         texture->width = width;
         texture->height = height;
         texture->originFormat = internalformat;
         if (texture->generateMipmap) glGenerateMipmap(target);
+    }
+}
+
+/* 把一块压缩子区域合并进已保存的 level 副本。DXT 的每个 4x4 块是独立编码的，块对齐时
+   可以直接按块行 memcpy，无需解压-改-重压。无法就地合并时（非块对齐、该 level 尚无副本、
+   或区域越界）丢弃副本：宁可让 glGetTexImage / glGetCompressedTexImage 返回空数据，也不
+   要留下与 GPU 侧不一致的过期内容。
+   注：D3D9 对 DXT 表面的 LockRect 本身就要求矩形块对齐（否则返回 D3DERR_INVALIDCALL，
+   wined3d 亦如此），因此丢弃分支在真实内容里几乎不可达，属防御性处理。 */
+static void mergeCompressedLevelRegion(GLTexture* texture, int level, GLint xoffset, GLint yoffset, GLsizei width, GLsizei height, const void* data, int imageSize) {
+    /* 四个几何量必须为正：负 offset（如 -4）能通过 (x & 3)==0 的对齐检查，却会让下面的
+       dstPtr 落到副本缓冲之前造成堆下溢写；width/height 为 0 或负则会让 endOffset 的行
+       索引算出负值。GL 调用本身会按 INVALID_VALUE 拒绝这些参数，GPU 侧是安全的，需要
+       保护的只是 CPU 副本。 */
+    bool canMerge = level >= 0 && level < MAX_TEXTURE_LEVELS && texture->compressedLevel[level] != NULL &&
+                    xoffset >= 0 && yoffset >= 0 && width > 0 && height > 0 &&
+                    (xoffset & 3) == 0 && (yoffset & 3) == 0 && (width & 3) == 0 && (height & 3) == 0;
+
+    int blockSize = canMerge ? getS3TCBlockSize(texture->originFormat) : 0;
+    if (blockSize == 0) {
+        GLTexture_dropCompressedLevel(texture, level);
+        return;
+    }
+
+    int dstBlocksPerRow = (MAX(1, texture->width >> level) + 3) >> 2;
+    int srcBlocksPerRow = width >> 2;
+    int numRows = height >> 2;
+    int srcRowBytes = srcBlocksPerRow * blockSize;
+
+    /* 越界校验：源数据必须够 numRows 行，且目标块行/块列不得超出该 level 副本的范围 */
+    if (srcRowBytes * numRows > imageSize || (xoffset >> 2) + srcBlocksPerRow > dstBlocksPerRow) {
+        GLTexture_dropCompressedLevel(texture, level);
+        return;
+    }
+    int startOffset = ((yoffset >> 2) * dstBlocksPerRow + (xoffset >> 2)) * blockSize;
+    int endOffset = startOffset + ((numRows - 1) * dstBlocksPerRow + srcBlocksPerRow) * blockSize;
+    if (startOffset < 0 || endOffset > texture->compressedLevelSize[level]) {
+        GLTexture_dropCompressedLevel(texture, level);
+        return;
+    }
+
+    uint8_t* dstPtr = (uint8_t*)texture->compressedLevel[level] + startOffset;
+    const uint8_t* srcPtr = data;
+    for (int i = 0; i < numRows; i++, dstPtr += dstBlocksPerRow * blockSize, srcPtr += srcRowBytes) {
+        memcpy(dstPtr, srcPtr, srcRowBytes);
     }
 }
 
@@ -511,6 +618,31 @@ void gd_handle_glCompressedTexSubImage2D(GLContext* context) {
     GLsizei height = ArrayBuffer_getInt(&context->inputBuffer);
     GLenum format = ArrayBuffer_getInt(&context->inputBuffer);
     GLint imageSize = ArrayBuffer_getInt(&context->inputBuffer);
+
+    target = parseTexTarget(target);
+    GLTexture* texture = GLTexture_getBound(target);
+
+    /* GPU 侧是原生压缩格式时只能继续用压缩接口更新：对压缩纹理调 glTexSubImage2D 是
+       INVALID_OPERATION。 */
+    if (texture && texture->compressedNative && imageSize > 0) {
+        GLBuffer* pixelUnpackBuffer = GLBuffer_getBound(GL_PIXEL_UNPACK_BUFFER);
+        if (pixelUnpackBuffer) {
+            uint64_t pointer = ArrayBuffer_getInt(&context->inputBuffer);
+            void* compressedData = pixelUnpackBuffer->mappedData + pointer;
+            glCompressedTexSubImage2D(target, level, xoffset, yoffset, width, height, format, imageSize, compressedData);
+            mergeCompressedLevelRegion(texture, level, xoffset, yoffset, width, height, compressedData, imageSize);
+            gl_send(context->clientRing, REQUEST_CODE_GL_COMPRESSED_TEX_SUB_IMAGE2D, NULL, 0);
+        }
+        else {
+            void* compressedData = NULL;
+            RING_READ_BEGIN(context->serverRing, compressedData, imageSize);
+            glCompressedTexSubImage2D(target, level, xoffset, yoffset, width, height, format, imageSize, compressedData);
+            /* 必须在 RING_READ_END 之前合并：数据可能直接指向 ring 映射内存 */
+            mergeCompressedLevelRegion(texture, level, xoffset, yoffset, width, height, compressedData, imageSize);
+            RING_READ_END(context->serverRing);
+        }
+        return;
+    }
 
     void* decompressedData = NULL;
     if (imageSize > 0) {
@@ -528,7 +660,7 @@ void gd_handle_glCompressedTexSubImage2D(GLContext* context) {
         }
     }
 
-    glTexSubImage2D(parseTexTarget(target), level, xoffset, yoffset, width, height, GL_BGRA, GL_UNSIGNED_BYTE, decompressedData);
+    glTexSubImage2D(target, level, xoffset, yoffset, width, height, GL_BGRA, GL_UNSIGNED_BYTE, decompressedData);
     MEMFREE(decompressedData);
 }
 
@@ -2656,6 +2788,11 @@ void gd_handle_glTexImage2D(GLContext* context) {
 
     GLTexture* texture = GLTexture_getBound(target);
     if (texture && level == 0) {
+        /* glTexImage2D 会整体重新指定纹理存储，此后 GPU 侧不再是压缩格式。必须清除透传
+           状态，否则 glGetTexImage 会错误地走"解压 CPU 副本"分支。这也覆盖了 guest 用压缩
+           internalformat 但 imageSize==0 做纯分配的情形（convertTexImageFormat 会把它转成
+           GL_BGRA 分配）。 */
+        GLTexture_clearCompressedLevels(texture);
         texture->width = width;
         texture->height = height;
         texture->originFormat = originFormat;

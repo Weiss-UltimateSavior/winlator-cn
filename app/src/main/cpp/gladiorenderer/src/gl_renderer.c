@@ -83,10 +83,34 @@ static void initLight(GLLight* light) {
     light->spotCutoffExponent[0] = TO_RADIANS(180);
 }
 
+/* 真实驱动的 S3TC 支持探测结果。gladio 无条件向 guest 声明
+   GL_EXT_texture_compression_s3tc（见 gl_context.c 的 getGLExtensions），所以 guest 一定会
+   发 DXT 数据过来；但服务端能否把它直接交给 GPU 取决于宿主 Adreno 驱动。绝大多数 Adreno
+   原生 GLES 驱动都带这个扩展，仍必须运行时确认并保留 CPU 解压回退。
+   探测在 GLRenderer_initOnEGLContext 中完成：那里 EGL 上下文已 current（glGetString 的
+   前提）且处于 GLX_CONTEXT_LOCK 保护下。不能放在查询函数里惰性探测——每个 GLXContext 有
+   各自的 requestHandlerThread，并发首调会产生数据竞争。所有 context 共用同一个
+   eglGetDisplay(EGL_DEFAULT_DISPLAY) 驱动，故进程内探测一次即可。 */
+static bool s3tcPassthroughProbed = false;
+static bool s3tcPassthroughSupported = false;
+
+bool GLRenderer_isS3TCPassthroughSupported() {
+    return s3tcPassthroughSupported;
+}
+
 void GLRenderer_initOnEGLContext(GLRenderer* renderer) {
     const float color[] = {1.0f, 1.0f, 1.0f, 1.0f};
     const float normal[] = {0.0f, 0.0f, 1.0f};
     const float texCoord[] = {0.0f, 0.0f, 0.0f, 1.0f};
+
+#if S3TC_PASSTHROUGH
+    if (!s3tcPassthroughProbed) {
+        s3tcPassthroughProbed = true;
+        const char* extensions = (const char*)glGetString(GL_EXTENSIONS);
+        s3tcPassthroughSupported = extensions && strstr(extensions, "GL_EXT_texture_compression_s3tc") != NULL;
+        println("gladio: S3TC passthrough %s", s3tcPassthroughSupported ? "enabled" : "unsupported by driver, using CPU decode");
+    }
+#endif
 
     memcpy(renderer->state.color, color, sizeof(color));
     memcpy(renderer->state.normal, normal, sizeof(normal));
@@ -1299,17 +1323,77 @@ void GLRenderer_getTexParameter(GLRenderer* renderer, GLenum target, GLint level
 void* GLRenderer_getTexImage(GLRenderer* renderer, GLenum target, GLint level, GLenum format, GLenum type, int* imageSize) {
     target = parseTexTarget(target);
     GLTexture* texture = GLTexture_getBound(target);
-    *imageSize = texture ? computeTexImageDataSize(format, type, texture->width, texture->height, 1) : 0;
-    if (*imageSize == 0) return NULL;
+    if (!texture) {
+        *imageSize = 0;
+        return NULL;
+    }
+
+    /* 原生压缩纹理（S3TC 透传）在 GPU 侧存的就是压缩格式，而压缩格式在 GLES 里不是
+       color-renderable：attach 到 FBO 会得到 incomplete framebuffer，readPixels 读回垃圾。
+       改为把该 level 的 CPU 压缩副本解压到一张临时 RGBA8 纹理，再走下面既有的
+       readPixels + 格式转换路径，从而完整复用现有的 format/type 转换逻辑。
+       非原生压缩纹理保持原有的直接 attach 行为不变。 */
+    GLenum readbackTarget = target;
+    GLuint readbackId = texture->id;
+    GLuint tempTexture = 0;
+    int readbackWidth = texture->width;
+    int readbackHeight = texture->height;
+
+    if (texture->compressedNative) {
+        void* levelData = level >= 0 && level < MAX_TEXTURE_LEVELS ? texture->compressedLevel[level] : NULL;
+        if (!levelData) {
+            *imageSize = 0;
+            return NULL;
+        }
+
+        readbackWidth = MAX(1, texture->width >> level);
+        readbackHeight = MAX(1, texture->height >> level);
+
+        /* 防御性校验：BCDecoder_decode 会无条件按 ceil(w/4)*ceil(h/4)*blockSize 读取源缓冲。
+           上传时已校验过 imageSize，但 level 0 被以不同尺寸重新指定后，更高 level 的旧副本
+           会与新的 texture->width 不匹配，这里是避免堆越界读的最后一道防线。 */
+        int requiredSize = getCompressedImageSize(texture->originFormat, texture->width, texture->height, level);
+        if (texture->compressedLevelSize[level] < requiredSize) {
+            *imageSize = 0;
+            return NULL;
+        }
+
+        void* rgba = decompressTexImage2D(texture->originFormat, readbackWidth, readbackHeight, levelData, NULL);
+        if (!rgba) {
+            *imageSize = 0;
+            return NULL;
+        }
+
+        /* 临时纹理走 GL_TEXTURE_2D，与 target 可能不同（CUBE_MAP 等）。glBindTexture 会
+           改动真实绑定点而 gladio 的 clientState 缓存不知情，故先存后恢复，避免真实绑定
+           漂移（与下面恢复 FBO 绑定的理由相同）。 */
+        GLint prevTexBinding = 0;
+        glGetIntegerv(GL_TEXTURE_BINDING_2D, &prevTexBinding);
+
+        glGenTextures(1, &tempTexture);
+        glBindTexture(GL_TEXTURE_2D, tempTexture);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, readbackWidth, readbackHeight, 0, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
+        glBindTexture(GL_TEXTURE_2D, (GLuint)prevTexBinding);
+        free(rgba);
+
+        readbackTarget = GL_TEXTURE_2D;
+        readbackId = tempTexture;
+    }
+
+    *imageSize = computeTexImageDataSize(format, type, readbackWidth, readbackHeight, 1);
+    if (*imageSize == 0) {
+        if (tempTexture) glDeleteTextures(1, &tempTexture);
+        return NULL;
+    }
 
     GLuint framebuffer;
     glGenFramebuffers(1, &framebuffer);
     glBindFramebuffer(GL_FRAMEBUFFER, framebuffer);
 
-    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, target, texture->id, 0);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, readbackTarget, readbackId, 0);
 
     void* pixels = malloc(*imageSize);
-    GLRenderer_readPixels(renderer, 0, 0, texture->width, texture->height, format, type, pixels);
+    GLRenderer_readPixels(renderer, 0, 0, readbackWidth, readbackHeight, format, type, pixels);
 
     // 分别按 DRAW/READ 槽恢复真实绑定。不能按 slot0（GL_FRAMEBUFFER 合并槽）裸
     // glBindFramebuffer 恢复：slot0 只是"客户端最后一次合并绑定"的缓存记录，与
@@ -1319,17 +1403,58 @@ void* GLRenderer_getTexImage(GLRenderer* renderer, GLenum target, GLint level, G
     GLFramebuffer_bind(GL_DRAW_FRAMEBUFFER, renderer->clientState.framebuffer[indexOfGLTarget(GL_DRAW_FRAMEBUFFER)]);
     GLFramebuffer_bind(GL_READ_FRAMEBUFFER, renderer->clientState.framebuffer[indexOfGLTarget(GL_READ_FRAMEBUFFER)]);
     glDeleteFramebuffers(1, &framebuffer);
+    if (tempTexture) glDeleteTextures(1, &tempTexture);
     return pixels;
 }
 
 void* GLRenderer_getCompressedTexImage(GLRenderer* renderer, GLenum target, GLint level, int* compressedSize) {
     target = parseTexTarget(target);
     GLTexture* texture = GLTexture_getBound(target);
-    *compressedSize = texture ? getCompressedImageSize(texture->originFormat, texture->width, texture->height, level) : 0;
+    if (!texture) {
+        *compressedSize = 0;
+        return NULL;
+    }
+
+    /* 原生压缩纹理：GPU 侧存的就是 guest 发来的压缩数据，直接返回 CPU 副本的拷贝
+       （调用方负责 free，故必须复制而不能返回内部指针）。这条路径同时省掉了旧实现的
+       FBO readPixels + stb_compress_dxt_block CPU 重压缩，比透传前更快。 */
+    if (texture->compressedNative) {
+        int size = level >= 0 && level < MAX_TEXTURE_LEVELS ? texture->compressedLevelSize[level] : 0;
+        void* levelData = size > 0 ? texture->compressedLevel[level] : NULL;
+        if (!levelData) {
+            *compressedSize = 0;
+            return NULL;
+        }
+        /* 钳制到 guest 期望的大小：guest 是按 GL_TEXTURE_COMPRESSED_IMAGE_SIZE（gladio 同样
+           用 getCompressedImageSize 报告）分配接收缓冲的，若副本保存的 imageSize 偏大
+           （guest 填充过，或 level 0 被以更小尺寸重新指定后旧副本仍在），按副本大小回传
+           会写穿 guest 侧缓冲。 */
+        int expectedSize = getCompressedImageSize(texture->originFormat, texture->width, texture->height, level);
+        if (expectedSize <= 0 || size > expectedSize) size = expectedSize;
+        if (size <= 0) {
+            *compressedSize = 0;
+            return NULL;
+        }
+
+        void* copy = malloc(size);
+        if (!copy) {
+            *compressedSize = 0;
+            return NULL;
+        }
+        memcpy(copy, levelData, size);
+        *compressedSize = size;
+        return copy;
+    }
+
+    *compressedSize = getCompressedImageSize(texture->originFormat, texture->width, texture->height, level);
     if (*compressedSize == 0) return NULL;
 
     int imageSize;
     void* imageData = GLRenderer_getTexImage(renderer, target, level, GL_RGBA, GL_UNSIGNED_BYTE, &imageSize);
+    if (!imageData) {
+        *compressedSize = 0;
+        return NULL;
+    }
 
     void* compressedData = malloc(*compressedSize);
     compressTexImage2D(texture->originFormat, texture->width, texture->height, imageData, compressedData);

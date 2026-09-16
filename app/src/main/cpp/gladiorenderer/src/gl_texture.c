@@ -56,6 +56,38 @@ GLTexture* GLTexture_get(GLuint id) {
     return texture ? texture : &nullTexture;
 }
 
+void GLTexture_setCompressedLevel(GLTexture* texture, int level, const void* data, int size) {
+    if (!texture || level < 0 || level >= MAX_TEXTURE_LEVELS || !data || size <= 0) return;
+    free(texture->compressedLevel[level]);
+    void* copy = malloc(size);
+    if (!copy) {
+        texture->compressedLevel[level] = NULL;
+        texture->compressedLevelSize[level] = 0;
+        return;
+    }
+    memcpy(copy, data, size);
+    texture->compressedLevel[level] = copy;
+    texture->compressedLevelSize[level] = size;
+}
+
+void GLTexture_dropCompressedLevel(GLTexture* texture, int level) {
+    if (!texture || level < 0 || level >= MAX_TEXTURE_LEVELS) return;
+    free(texture->compressedLevel[level]);
+    texture->compressedLevel[level] = NULL;
+    texture->compressedLevelSize[level] = 0;
+}
+
+void GLTexture_clearCompressedLevels(GLTexture* texture) {
+    if (!texture) return;
+    for (int i = 0; i < MAX_TEXTURE_LEVELS; i++) {
+        free(texture->compressedLevel[i]);
+        texture->compressedLevel[i] = NULL;
+        texture->compressedLevelSize[i] = 0;
+    }
+    texture->compressedNative = false;
+    texture->compressedModeDecided = false;
+}
+
 void GLTexture_delete(GLuint id) {
     GLX_CONTEXT_LOCK();
     GLClientState* clientState = &currentRenderer->clientState;
@@ -67,6 +99,7 @@ void GLTexture_delete(GLuint id) {
             }
         }
 
+        GLTexture_clearCompressedLevels(texture);
         glDeleteTextures(1, &texture->id);
         SparseArray_remove(clientState->textures, id);
         free(texture);

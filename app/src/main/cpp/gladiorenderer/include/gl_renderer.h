@@ -163,6 +163,9 @@ typedef struct GLRenderer {
 } GLRenderer;
 
 extern void GLRenderer_initOnEGLContext(GLRenderer* renderer);
+/* 查询真实驱动是否支持 GL_EXT_texture_compression_s3tc。结果进程内缓存，首次调用必须在
+   EGL 上下文已 current 时进行（glGetString 依赖当前上下文）。 */
+extern bool GLRenderer_isS3TCPassthroughSupported();
 extern bool GLRenderer_useARBProgram(GLRenderer* renderer, bool fullUpdate);
 extern void GLRenderer_drawImmediate(GLRenderer* renderer);
 extern void GLRenderer_beginImmediate(GLRenderer* renderer, GLenum mode);

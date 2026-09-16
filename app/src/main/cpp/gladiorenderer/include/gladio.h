@@ -13,6 +13,10 @@
 #define THREAD_POOL_NUM_THREADS 4
 #define PIXEL_READ_CACHE_SKIP_FRAMES 3
 #define SKIP_GL_FINISH 1
+/* S3TC/DXT 透传：驱动支持 GL_EXT_texture_compression_s3tc 时，把 guest 发来的压缩纹理
+   直接交给 GPU，跳过 bc_decoder 的同步 CPU 解压（它会阻塞渲染线程）以及 4~8 倍的上传
+   带宽、显存占用与稳态采样带宽。置 0 可整体回退到"解压成 BGRA 再上传"的旧路径。 */
+#define S3TC_PASSTHROUGH 1
 #define X11_SERVER_PATH "/data/data/com.winlator/files/rootfs/tmp/.X11-unix/X0"
 
 #define GL_STRING_VERSION "3.3"
@@ -30,6 +34,8 @@
 #define MAX_LIGHTS 8
 #define MAX_TEXTURES 8
 #define MAX_TEXTURE_TARGETS 4
+/* 覆盖 GL 最大纹理尺寸 16384 对应的 15 级 mip 链，用于按 level 索引压缩纹理的 CPU 副本 */
+#define MAX_TEXTURE_LEVELS 16
 #define MAX_FRAMEBUFFER_TARGETS 3
 #define MAX_BUFFER_TARGETS 6
 #define MAX_ARB_PROGRAM_TARGETS 2
