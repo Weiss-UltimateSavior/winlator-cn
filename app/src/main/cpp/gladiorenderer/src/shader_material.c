@@ -575,34 +575,71 @@ void ShaderMaterial_destroy(ShaderMaterial* material) {
 }
 
 static void setLightUniforms(GLRenderer* renderer, ShaderMaterial* material) {
+    /* 先把启用中的灯按紧凑顺序打包进暂存区，再与缓存整体比较。不能逐盏比较：灯的
+       启用/禁用会改变紧凑索引 j，"第 j 盏换成了另一盏"逐盏比较是发现不了的。
+       每盏 21 个 float = ambient3 + diffuse3 + specular3 + position4 + attenuation3 +
+       spotCutoffExponent2 + spotDirection3，与下面 glUniform* 的分量数一一对应。 */
+    float staged[MAX_LIGHTS][21];
     int numLights = 0;
-    for (int i = 0, j; i < MAX_LIGHTS; i++) {
+    for (int i = 0; i < MAX_LIGHTS; i++) {
         GLLight* light = &renderer->lights[i];
-        if (light->enabled) {
-            j = numLights;
-            glUniform3fv(material->location.lights[j][0], 1, (const GLfloat*)light->ambient);
-            glUniform3fv(material->location.lights[j][1], 1, (const GLfloat*)light->diffuse);
-            glUniform3fv(material->location.lights[j][2], 1, (const GLfloat*)light->specular);
-            glUniform4fv(material->location.lights[j][3], 1, (const GLfloat*)light->position);
-            glUniform3fv(material->location.lights[j][4], 1, (const GLfloat*)light->attenuation);
-            glUniform2fv(material->location.lights[j][5], 1, (const GLfloat*)light->spotCutoffExponent);
-            glUniform3fv(material->location.lights[j][6], 1, (const GLfloat*)light->spotDirection);
-            numLights++;
-        }
+        if (!light->enabled) continue;
+        float* dst = staged[numLights++];
+        memcpy(dst + 0, light->ambient, 3 * sizeof(float));
+        memcpy(dst + 3, light->diffuse, 3 * sizeof(float));
+        memcpy(dst + 6, light->specular, 3 * sizeof(float));
+        memcpy(dst + 9, light->position, 4 * sizeof(float));
+        memcpy(dst + 13, light->attenuation, 3 * sizeof(float));
+        memcpy(dst + 16, light->spotCutoffExponent, 2 * sizeof(float));
+        memcpy(dst + 18, light->spotDirection, 3 * sizeof(float));
+    }
+
+    if (material->cache.valid && material->cache.numLights == numLights &&
+        memcmp(material->cache.lights, staged, numLights * sizeof(staged[0])) == 0) {
+        return;
+    }
+
+    for (int j = 0; j < numLights; j++) {
+        const float* src = staged[j];
+        glUniform3fv(material->location.lights[j][0], 1, src + 0);
+        glUniform3fv(material->location.lights[j][1], 1, src + 3);
+        glUniform3fv(material->location.lights[j][2], 1, src + 6);
+        glUniform4fv(material->location.lights[j][3], 1, src + 9);
+        glUniform3fv(material->location.lights[j][4], 1, src + 13);
+        glUniform2fv(material->location.lights[j][5], 1, src + 16);
+        glUniform3fv(material->location.lights[j][6], 1, src + 18);
     }
     glUniform1i(material->location.numLights, numLights);
+
+    material->cache.numLights = numLights;
+    memcpy(material->cache.lights, staged, numLights * sizeof(staged[0]));
 }
 
 static void setMaterialUniforms(GLRenderer* renderer, ShaderMaterial* material) {
     if (!renderer->materials) return;
     GLMaterial* materials = renderer->materials;
 
+    /* 按实际上传的分量数打包：ambient3 + diffuse3 + specular4 + emission3 = 13。
+       diffuse 声明为 [4]，但第 4 个分量只作为"光照启用时顶点颜色的 A 分量"使用，
+       不进 uniform（下面是 glUniform3fv），故不参与比较。 */
+    float staged[2][13];
     for (int i = 0; i < 2; i++) {
-        glUniform3fv(material->location.materials[i][0], 1, (const GLfloat*)materials[i].ambient);
-        glUniform3fv(material->location.materials[i][1], 1, (const GLfloat*)materials[i].diffuse);
-        glUniform4fv(material->location.materials[i][2], 1, (const GLfloat*)materials[i].specular);
-        glUniform3fv(material->location.materials[i][3], 1, (const GLfloat*)materials[i].emission);
+        memcpy(staged[i] + 0, materials[i].ambient, 3 * sizeof(float));
+        memcpy(staged[i] + 3, materials[i].diffuse, 3 * sizeof(float));
+        memcpy(staged[i] + 6, materials[i].specular, 4 * sizeof(float));
+        memcpy(staged[i] + 10, materials[i].emission, 3 * sizeof(float));
     }
+
+    if (material->cache.valid && memcmp(material->cache.materials, staged, sizeof(staged)) == 0) return;
+
+    for (int i = 0; i < 2; i++) {
+        glUniform3fv(material->location.materials[i][0], 1, staged[i] + 0);
+        glUniform3fv(material->location.materials[i][1], 1, staged[i] + 3);
+        glUniform4fv(material->location.materials[i][2], 1, staged[i] + 6);
+        glUniform3fv(material->location.materials[i][3], 1, staged[i] + 10);
+    }
+
+    memcpy(material->cache.materials, staged, sizeof(staged));
 }
 
 static void setARBProgramUniforms(ShaderMaterial* material, ARBProgram* program) {
@@ -643,57 +680,132 @@ void ShaderMaterial_updatePointUniforms(ShaderMaterial* material, GLRenderer* re
 }
 
 void ShaderMaterial_updateUniforms(ShaderMaterial* material, GLRenderer* renderer, MaterialOptions* options) {
+    /* 每组 uniform 都先把值打包进栈上暂存数组，再与 cache 中"上次真正下发给本 program 的
+       值"做 memcmp，相同则整组跳过。本函数每个 immediate batch 都会被调用，而绝大多数
+       batch 之间这些值根本没变。 */
     if (options->transformVertex) {
-        glUniformMatrix4fv(material->location.modelViewMatrix, 1, GL_FALSE, GLRenderer_getMatrixFromStack(renderer, MODEL_VIEW_MATRIX_INDEX));
-        glUniformMatrix4fv(material->location.projectionMatrix, 1, GL_FALSE, GLRenderer_getMatrixFromStack(renderer, PROJECTION_MATRIX_INDEX));
+        const float* modelView = GLRenderer_getMatrixFromStack(renderer, MODEL_VIEW_MATRIX_INDEX);
+        if (!material->cache.valid || memcmp(material->cache.modelViewMatrix, modelView, sizeof(material->cache.modelViewMatrix)) != 0) {
+            glUniformMatrix4fv(material->location.modelViewMatrix, 1, GL_FALSE, modelView);
+            memcpy(material->cache.modelViewMatrix, modelView, sizeof(material->cache.modelViewMatrix));
+        }
+
+        const float* projection = GLRenderer_getMatrixFromStack(renderer, PROJECTION_MATRIX_INDEX);
+        if (!material->cache.valid || memcmp(material->cache.projectionMatrix, projection, sizeof(material->cache.projectionMatrix)) != 0) {
+            glUniformMatrix4fv(material->location.projectionMatrix, 1, GL_FALSE, projection);
+            memcpy(material->cache.projectionMatrix, projection, sizeof(material->cache.projectionMatrix));
+        }
     }
 
     if (options->numTextures >= 1) {
         if (!options->vertexProgram) {
-            glUniformMatrix4fv(material->location.textureMatrix, 1, GL_FALSE, GLRenderer_getMatrixFromStack(renderer, TEXTURE_MATRIX_INDEX));
+            const float* textureMatrix = GLRenderer_getMatrixFromStack(renderer, TEXTURE_MATRIX_INDEX);
+            if (!material->cache.valid || memcmp(material->cache.textureMatrix, textureMatrix, sizeof(material->cache.textureMatrix)) != 0) {
+                glUniformMatrix4fv(material->location.textureMatrix, 1, GL_FALSE, textureMatrix);
+                memcpy(material->cache.textureMatrix, textureMatrix, sizeof(material->cache.textureMatrix));
+            }
+        }
+
+        /* sampler uniform 的值恒等于纹理单元号，是 program 生命周期内的常量，只需设一次。
+           本函数总是在 glUseProgram(material->program) 之后被调用，故此处 program 必定
+           已 current，设置会落到正确的 program 上。 */
+        if (!material->cache.samplersSet) {
+            for (int i = 0; i < MAX_TEXTURES; i++) {
+                if (material->location.texture[i] != -1) glUniform1i(material->location.texture[i], i);
+            }
+            material->cache.samplersSet = true;
         }
 
         for (int i = 0; i < MAX_TEXTURES; i++) {
-            if (material->location.texture[i] != -1) {
-                glUniform1i(material->location.texture[i], i);
+            if (material->location.texture[i] == -1) continue;
 
-                GLTexture* texture = renderer->clientState.texture[i][indexOfGLTarget(GL_TEXTURE_2D)];
-                if (texture && texture->originFormat == GL_ALPHA) {
-                    glUniform1i(material->location.texEnv[i][0], renderer->state.enabledTextures[i] ? GL_COMBINE : 0);
-                    glUniform2i(material->location.texEnv[i][2], GL_REPLACE, renderer->state.texEnv[i].mode);
-                    glUniform4i(material->location.texEnv[i][4], GL_PREVIOUS, GL_PREVIOUS, GL_TEXTURE, GL_PREVIOUS);
-                    glUniform4i(material->location.texEnv[i][5], GL_SRC_COLOR, GL_SRC_COLOR, GL_SRC_ALPHA, GL_SRC_ALPHA);
-                }
-                else {
-                    glUniform1i(material->location.texEnv[i][0], renderer->state.enabledTextures[i] ? renderer->state.texEnv[i].mode : 0);
-                    glUniform2iv(material->location.texEnv[i][2], 1, renderer->state.texEnv[i].combineRGBA);
-                    glUniform4iv(material->location.texEnv[i][4], 1, renderer->state.texEnv[i].sourceRGBA);
-                    glUniform4iv(material->location.texEnv[i][5], 1, renderer->state.texEnv[i].operandRGBA);
-                }
+            /* texEnv 的最终取值同时受三方影响：enabledTextures[i]、texEnv[i].mode，以及
+               当前绑定纹理是否为 GL_ALPHA（后者会整体切换到一套硬编码的 combine/source/
+               operand）。必须把三者的合成结果一起打包比较，只比较 texEnv 状态本身会在
+               "换绑了一张 GL_ALPHA 纹理"时漏掉更新。 */
+            GLTexture* texture = renderer->clientState.texture[i][indexOfGLTarget(GL_TEXTURE_2D)];
+            bool isAlphaTexture = texture && texture->originFormat == GL_ALPHA;
+            bool textureEnabled = renderer->state.enabledTextures[i] != 0;
 
-                glUniform4fv(material->location.texEnv[i][1], 1, renderer->state.texEnv[i].color);
-                glUniform2fv(material->location.texEnv[i][3], 1, renderer->state.texEnv[i].rgbaScale);
-                glUniform1f(material->location.texEnv[i][6], renderer->state.texEnv[i].lodBias);
+            int stagedInts[11];
+            if (isAlphaTexture) {
+                stagedInts[0] = textureEnabled ? GL_COMBINE : 0;
+                stagedInts[1] = GL_REPLACE;
+                stagedInts[2] = renderer->state.texEnv[i].mode;
+                stagedInts[3] = GL_PREVIOUS;
+                stagedInts[4] = GL_PREVIOUS;
+                stagedInts[5] = GL_TEXTURE;
+                stagedInts[6] = GL_PREVIOUS;
+                stagedInts[7] = GL_SRC_COLOR;
+                stagedInts[8] = GL_SRC_COLOR;
+                stagedInts[9] = GL_SRC_ALPHA;
+                stagedInts[10] = GL_SRC_ALPHA;
+            }
+            else {
+                stagedInts[0] = textureEnabled ? renderer->state.texEnv[i].mode : 0;
+                memcpy(stagedInts + 1, renderer->state.texEnv[i].combineRGBA, 2 * sizeof(int));
+                memcpy(stagedInts + 3, renderer->state.texEnv[i].sourceRGBA, 4 * sizeof(int));
+                memcpy(stagedInts + 7, renderer->state.texEnv[i].operandRGBA, 4 * sizeof(int));
+            }
+
+            if (!material->cache.valid || memcmp(material->cache.texEnvInts[i], stagedInts, sizeof(stagedInts)) != 0) {
+                glUniform1i(material->location.texEnv[i][0], stagedInts[0]);
+                glUniform2iv(material->location.texEnv[i][2], 1, stagedInts + 1);
+                glUniform4iv(material->location.texEnv[i][4], 1, stagedInts + 3);
+                glUniform4iv(material->location.texEnv[i][5], 1, stagedInts + 7);
+                memcpy(material->cache.texEnvInts[i], stagedInts, sizeof(stagedInts));
+            }
+
+            float stagedFloats[7];
+            memcpy(stagedFloats + 0, renderer->state.texEnv[i].color, 4 * sizeof(float));
+            memcpy(stagedFloats + 4, renderer->state.texEnv[i].rgbaScale, 2 * sizeof(float));
+            stagedFloats[6] = renderer->state.texEnv[i].lodBias;
+
+            if (!material->cache.valid || memcmp(material->cache.texEnvFloats[i], stagedFloats, sizeof(stagedFloats)) != 0) {
+                glUniform4fv(material->location.texEnv[i][1], 1, stagedFloats + 0);
+                glUniform2fv(material->location.texEnv[i][3], 1, stagedFloats + 4);
+                glUniform1f(material->location.texEnv[i][6], stagedFloats[6]);
+                memcpy(material->cache.texEnvFloats[i], stagedFloats, sizeof(stagedFloats));
             }
         }
     }
 
     if (options->alphaTest) {
-        glUniform2f(material->location.alphaTest, renderer->state.alphaTest.enabled ? renderer->state.alphaTest.func : GL_ALWAYS, renderer->state.alphaTest.ref);
+        float staged[2];
+        staged[0] = (float)(renderer->state.alphaTest.enabled ? renderer->state.alphaTest.func : GL_ALWAYS);
+        staged[1] = renderer->state.alphaTest.ref;
+        if (!material->cache.valid || memcmp(material->cache.alphaTest, staged, sizeof(staged)) != 0) {
+            glUniform2fv(material->location.alphaTest, 1, staged);
+            memcpy(material->cache.alphaTest, staged, sizeof(staged));
+        }
     }
 
     if (options->fog) {
-        glUniform4fv(material->location.fog[0], 1, renderer->state.fog.color);
-        glUniform1f(material->location.fog[1], renderer->state.fog.density);
-        glUniform1f(material->location.fog[2], renderer->state.fog.start);
-        glUniform1f(material->location.fog[3], renderer->state.fog.end);
-        glUniform1f(material->location.fog[4], renderer->state.fog.mode);
+        if (!material->cache.valid || memcmp(material->cache.fogColor, renderer->state.fog.color, sizeof(material->cache.fogColor)) != 0) {
+            glUniform4fv(material->location.fog[0], 1, renderer->state.fog.color);
+            memcpy(material->cache.fogColor, renderer->state.fog.color, sizeof(material->cache.fogColor));
+        }
+
+        float staged[4];
+        staged[0] = renderer->state.fog.density;
+        staged[1] = renderer->state.fog.start;
+        staged[2] = renderer->state.fog.end;
+        staged[3] = (float)renderer->state.fog.mode;
+        if (!material->cache.valid || memcmp(material->cache.fogParams, staged, sizeof(staged)) != 0) {
+            glUniform1f(material->location.fog[1], staged[0]);
+            glUniform1f(material->location.fog[2], staged[1]);
+            glUniform1f(material->location.fog[3], staged[2]);
+            glUniform1f(material->location.fog[4], staged[3]);
+            memcpy(material->cache.fogParams, staged, sizeof(staged));
+        }
     }
 
     if (options->lighting) {
         setLightUniforms(renderer, material);
         setMaterialUniforms(renderer, material);
     }
+
+    material->cache.valid = true;
 
     if (options->vertexProgram) setARBProgramUniforms(material, options->vertexProgram);
     if (options->fragmentProgram) setARBProgramUniforms(material, options->fragmentProgram);

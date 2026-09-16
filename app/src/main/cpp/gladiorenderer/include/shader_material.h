@@ -67,6 +67,34 @@ typedef struct ShaderMaterial {
 
         int materials[2][4];
     } location;
+
+    /* 上次真正下发给本 program 的 uniform 值。ShaderMaterial_updateUniforms 每个 immediate
+       batch 都会被调用，而绝大多数 batch 之间这些值根本没变；逐组 memcmp 后可跳过大量
+       glUniform* 调用（1 纹理 1 灯约 33 次，4 纹理 3 灯约 71 次，MAX_LIGHTS 提到 8 后
+       最坏情况更多），这些调用全部串行发生在渲染线程上。
+       之所以用"上传点值缓存"而不是"变更点脏标"：uniform 是 per-program 状态（materialMap
+       里有多个 ShaderMaterial，wined3d 侧还有任意多个 ShaderProgram），且 texEnv 的取值
+       同时受 enabledTextures、texEnv.mode 与当前绑定纹理的 originFormat 三方影响，脏标
+       需要覆盖全部变更点，漏一处就是很难复现的画面错误。值缓存无需任何插桩。
+       结构体由 calloc 零初始化，配合 valid 保证首次一定上传。 */
+    struct {
+        bool valid;
+        bool samplersSet;
+        float modelViewMatrix[16];
+        float projectionMatrix[16];
+        float textureMatrix[16];
+        /* 每个纹理单元两组：整型 = mode + combineRGBA[2] + sourceRGBA[4] + operandRGBA[4]，
+           浮点 = color[4] + rgbaScale[2] + lodBias。用扁平数组而非结构体，避免结构体填充
+           字节未初始化导致 memcmp 出现虚假不等。 */
+        int texEnvInts[MAX_TEXTURES][11];
+        float texEnvFloats[MAX_TEXTURES][7];
+        float alphaTest[2];
+        float fogColor[4];
+        float fogParams[4];
+        int numLights;
+        float lights[MAX_LIGHTS][21];
+        float materials[2][13];
+    } cache;
 } ShaderMaterial;
 
 extern ShaderMaterial* ShaderMaterial_create(MaterialOptions* options);
