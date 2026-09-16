@@ -338,7 +338,9 @@ public class SettingsFragment extends Fragment {
             else if (preferences.contains("wine_debug_channels")) editor.remove("wine_debug_channels");
 
             if (editor.commit()) {
-                MainApplication.syncLogcatCapture(getContext());
+                // 关闭开关时停掉可能在跑的抓取；开启不在此处抓——logcat 只覆盖容器会话，
+                // 由 XServerDisplayActivity 启动时清空重抓。
+                if (!preferences.getBoolean("save_logcat_to_file", false)) MainApplication.stopLogcatSession();
                 if (!restartApp) {
                     NavigationView navigationView = getActivity().findViewById(R.id.NavigationView);
                     navigationView.setCheckedItem(R.id.menu_item_containers);

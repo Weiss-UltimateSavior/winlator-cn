@@ -91,13 +91,6 @@ public class MainActivity extends AppCompatActivity implements NavigationView.On
     }
 
     @Override
-    protected void onResume() {
-        super.onResume();
-        // 冷启动时 MainApplication 可能因存储未就绪启动 logcat 捕获失败，这里幂等重试
-        MainApplication.syncLogcatCapture(this);
-    }
-
-    @Override
     protected void attachBaseContext(Context newBase) {
         super.attachBaseContext(LocaleHelper.setSystemLocale(newBase));
     }

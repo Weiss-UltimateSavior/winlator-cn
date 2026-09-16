@@ -38,9 +38,6 @@ public class MainApplication extends Application {
     private static final String TAG = "CrashHandler";
     private static final String CRASH_LOG_FILE_NAME = "WinlatorCN-Crash.txt";
     private static final String LOGCAT_LOG_FILE_NAME = "WinlatorCN-logcat.txt";
-    // app 自身触发进程重启前由 AppUtils.restartApplication 置位。新进程据此区分
-    // "容器退出返回主菜单"与"用户从桌面冷启动"，前者保留已有 logcat 文件继续追加。
-    public static final String LOGCAT_KEEP_ON_RESTART_PREF = "logcat_keep_on_restart";
 
     // logcat -v threadtime 的一行形如：09-06 12:34:56.789  1234  5678 D System.out: msg
     // group(1)=PID，group(2)=TAG；不含该前缀的行是多行日志的续行，沿用上一条的判定结果。
@@ -91,35 +88,32 @@ public class MainApplication extends Application {
         // /data/data/<包名>/<别名>，需要在数据目录下建软链 <别名> -> files/rootfs，
         // 使替换后的路径仍解析到 rootfs。
         PatchUtils.ensureAliasSymlink(dataDir);
-        // 用户从桌面冷启动 → 无标记 → 重置 logcat 文件；app 自身触发的进程重启
-        // （容器退出返回主菜单、改设置、装 Wine）→ 有标记 → 保留已有日志继续追加。
-        // 标记读完立即清除，保证下一次真正的冷启动仍会重置。
-        SharedPreferences preferences = PreferenceManager.getDefaultSharedPreferences(this);
-        keepExistingLogcat = preferences.getBoolean(LOGCAT_KEEP_ON_RESTART_PREF, false);
-        if (keepExistingLogcat) preferences.edit().remove(LOGCAT_KEEP_ON_RESTART_PREF).commit();
-        startLogcatCapture();
+        // logcat 捕获不再于 Application 启动时自动开始：改为只覆盖容器会话
+        // （XServerDisplayActivity 启动/退出时 start/stop），与 wine/box64 日志一致。
+        // 主菜单、设置、容器安装等阶段不再记录，文件也不再被无关注重启清零。
     }
 
-    // 按当前开关状态同步 logcat 捕获：幂等，可随时调用（设置页保存后、Activity 恢复时）
-    // 冷启动时存储尚未就绪导致 startCapture 静默失败，靠界面恢复时重新同步来重试
-    public static void syncLogcatCapture(Context context) {
-        boolean enabled = PreferenceManager.getDefaultSharedPreferences(context).getBoolean("save_logcat_to_file", false);
-        if (enabled) {
-            if (captureProcess != null) return; // 已在运行
-            Application app = (Application) context.getApplicationContext();
-            startCapture(app, LOGCAT_LOG_FILE_NAME);
-        }
-        else {
-            stopCapture();
-        }
+    /**
+     * 容器会话开始：清空 logcat 日志并开始捕获。
+     * 与 wine/box64 日志（LogView 在容器 Activity 创建时删除旧文件）保持同一生命周期。
+     */
+    public static void startLogcatSession(Context context) {
+        if (!isLogcatCaptureEnabled(context)) return;
+        Application app = (Application) context.getApplicationContext();
+        startCapture(app, LOGCAT_LOG_FILE_NAME, false);
+    }
+
+    /** 容器会话结束：停止捕获，文件保留供查看。 */
+    public static void stopLogcatSession() {
+        stopCapture();
+    }
+
+    private static boolean isLogcatCaptureEnabled(Context context) {
+        return PreferenceManager.getDefaultSharedPreferences(context).getBoolean("save_logcat_to_file", false);
     }
 
     private static volatile Process captureProcess = null;
     private static volatile boolean captureStarting = false;
-    // 本次进程是否保留已有 logcat 文件（追加而非清空）。onCreate 依据 restartApplication
-    // 打的标记判定一次；首次启动捕获后置为 true，使同一进程内后续再次启动捕获（如设置页
-    // 反复开关 logcat）也走追加，不丢掉本次会话已写下的日志。
-    private static volatile boolean keepExistingLogcat = false;
 
     private static void stopCapture() {
         Process process = captureProcess;
@@ -133,13 +127,10 @@ public class MainApplication extends Application {
         }
     }
 
-    private void startLogcatCapture() {
-        boolean enabled = PreferenceManager.getDefaultSharedPreferences(this).getBoolean("save_logcat_to_file", false);
-        if (!enabled) return;
-        startCapture(this, LOGCAT_LOG_FILE_NAME);
-    }
-
-    private static void startCapture(final Application app, final String logFileName) {
+    /**
+     * @param keepExisting true 追加到已有文件，false 清空重抓（容器会话开始时传 false）
+     */
+    private static void startCapture(final Application app, final String logFileName, final boolean keepExisting) {
         if (captureProcess != null || captureStarting) return;
         captureStarting = true;
         final File logFile = new File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), logFileName);
@@ -147,23 +138,15 @@ public class MainApplication extends Application {
         final int myPid = android.os.Process.myPid();
         Thread thread = new Thread(() -> {
             try {
-                // 容器退出会走 XServerDisplayActivity.exit -> AppUtils.restartApplication -> Runtime.exit(0)，
-                // 整个进程被杀后由 makeRestartActivityTask 拉起新进程，onCreate 会再次走到这里。
-                // 若此时截断文件，丢掉的正好是"容器退出前"那段最关键的日志，所以这种由 app 自身
-                // 触发的重启要追加（keepExistingLogcat 来自 restartApplication 置的标记）；
-                // 只有用户从桌面冷启动 app 才重置文件。文件不存在或已超过 maxSize 时同样清空
-                // (与下面循环内的轮转规则一致)，每段会话由这个带新 pid 的 header 分隔。
-                boolean append = keepExistingLogcat && logFile.isFile() && logFile.length() <= maxSize;
+                // 每次容器会话开始都清空重抓：只保留本次容器运行的日志，与 wine/box64 日志
+                // （LogView 在容器 Activity 创建时删除旧文件）保持一致的生命周期。
+                // 已超过 maxSize 时同样清空，与下面循环内的轮转规则一致。
+                boolean append = keepExisting && logFile.isFile() && logFile.length() <= maxSize;
                 try (OutputStreamWriter writer = new OutputStreamWriter(new FileOutputStream(logFile, append), StandardCharsets.UTF_8)) {
                     writer.write("========== logcat capture started " + new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(new Date()) + " ==========\n");
                     writer.write("filter: pid=" + myPid + " keep all, other processes tags = " + LOGCAT_TAG_WHITELIST + "\n");
                     writer.flush();
                 }
-                // 文件已成功打开并写下 header，本次进程的"重置"动作已完成。之后同一进程内
-                // 再次启动捕获（设置页反复开关 logcat）一律追加，不丢本次会话日志。
-                // 放在这里而非前面：冷启动时若存储未就绪导致打开失败，标记仍为 false，
-                // MainActivity 的幂等重试才会继续走重置而不是追加。
-                keepExistingLogcat = true;
                 // -T 1 只从缓冲区最后一条开始输出，避免把上次运行的历史日志 dump 进新文件
                 Process process = Runtime.getRuntime().exec(new String[]{"logcat", "-v", "threadtime", "-T", "1"});
                 captureProcess = process;

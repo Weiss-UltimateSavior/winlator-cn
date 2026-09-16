@@ -34,7 +34,6 @@ import androidx.appcompat.app.AppCompatActivity;
 import androidx.preference.PreferenceManager;
 
 import com.google.android.material.tabs.TabLayout;
-import com.winlator.MainApplication;
 import com.winlator.R;
 import com.winlator.SettingsFragment;
 
@@ -98,12 +97,6 @@ public abstract class AppUtils {
             if (options.containerId > 0) mainIntent.putExtra("container_id", options.containerId);
             if (options.startPath != null) mainIntent.putExtra("start_path", options.startPath);
         }
-
-        // 这里的所有调用都是 app 自身触发的进程重启（容器退出返回主菜单、改设置、装 Wine），
-        // 不是用户从桌面冷启动。置标记让新进程的 MainApplication 保留已有 logcat 文件继续追加，
-        // 避免丢掉容器退出前那段最关键的日志。必须 commit() 同步落盘，紧接着就 exit(0)。
-        PreferenceManager.getDefaultSharedPreferences(context).edit()
-            .putBoolean(MainApplication.LOGCAT_KEEP_ON_RESTART_PREF, true).commit();
 
         context.startActivity(mainIntent);
         Runtime.getRuntime().exit(0);
