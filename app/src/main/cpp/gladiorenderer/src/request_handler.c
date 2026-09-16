@@ -539,16 +539,31 @@ void gd_handle_glCompressedTexImage2D(GLContext* context) {
 
     void* decompressedData = NULL;
     if (imageSize > 0) {
+        /* BCDecoder_decode / decompressTexImage2D 的签名里都没有长度参数，读取量恒为
+           ceil(w/4)*ceil(h/4)*blockSize，结构上无法尊重 imageSize。ring 环绕分支会
+           malloc 精确 imageSize 的紧缓冲，PBO 的 mappedData 也只有 size 字节，
+           imageSize 偏小即堆越界读。width/height 已是该 level 的尺寸，故 level 传 0。
+           校验不过时跳过解压，decompressedData 保持 NULL——与 imageSize==0 的既有行为
+           一致，glTexImage2D 会分配一张内容未定义的纹理。
+           仅对已知 S3TC 格式校验：getCompressedImageSize 对未知格式返回 width*height
+           这个无意义估值，据此跳过解压会改变原有语义，故此时 requiredSize 取 0 放行。 */
+        int requiredSize = isCompressedFormat(internalformat) ? getCompressedImageSize(internalformat, width, height, 0) : 0;
+
         GLBuffer* pixelUnpackBuffer = GLBuffer_getBound(GL_PIXEL_UNPACK_BUFFER);
         if (pixelUnpackBuffer) {
             uint64_t pointer = ArrayBuffer_getInt(&context->inputBuffer);
-            decompressedData = decompressTexImage2D(internalformat, width, height, pixelUnpackBuffer->mappedData + pointer, context->threadPool);
+            if (requiredSize <= 0 || pointer + (uint64_t)requiredSize <= (uint64_t)pixelUnpackBuffer->size) {
+                decompressedData = decompressTexImage2D(internalformat, width, height, pixelUnpackBuffer->mappedData + pointer, context->threadPool);
+            }
             gl_send(context->clientRing, REQUEST_CODE_GL_COMPRESSED_TEX_IMAGE2D, NULL, 0);
         }
         else {
             void* imageData = NULL;
             RING_READ_BEGIN(context->serverRing, imageData, imageSize);
-            decompressedData = decompressTexImage2D(internalformat, width, height, imageData, context->threadPool);
+            /* 无论是否解压都必须走到 RING_READ_END，否则 ring 流会错位 */
+            if (imageData && imageSize >= requiredSize) {
+                decompressedData = decompressTexImage2D(internalformat, width, height, imageData, context->threadPool);
+            }
             RING_READ_END(context->serverRing);
         }
     }
@@ -646,16 +661,27 @@ void gd_handle_glCompressedTexSubImage2D(GLContext* context) {
 
     void* decompressedData = NULL;
     if (imageSize > 0) {
+        /* 同 gd_handle_glCompressedTexImage2D：BCDecoder_decode 无长度参数，读取量恒为
+           ceil(w/4)*ceil(h/4)*blockSize，imageSize 偏小即堆越界读。此处 format 是压缩
+           格式、width/height 是子图像尺寸（已是该 level 的相对尺寸），故 level 传 0。
+           仅对已知 S3TC 格式校验，未知格式 requiredSize 取 0 放行以保持原有语义。 */
+        int requiredSize = isCompressedFormat(format) ? getCompressedImageSize(format, width, height, 0) : 0;
+
         GLBuffer* pixelUnpackBuffer = GLBuffer_getBound(GL_PIXEL_UNPACK_BUFFER);
         if (pixelUnpackBuffer) {
             uint64_t pointer = ArrayBuffer_getInt(&context->inputBuffer);
-            decompressedData = decompressTexImage2D(format, width, height, pixelUnpackBuffer->mappedData + pointer, context->threadPool);
+            if (requiredSize <= 0 || pointer + (uint64_t)requiredSize <= (uint64_t)pixelUnpackBuffer->size) {
+                decompressedData = decompressTexImage2D(format, width, height, pixelUnpackBuffer->mappedData + pointer, context->threadPool);
+            }
             gl_send(context->clientRing, REQUEST_CODE_GL_COMPRESSED_TEX_SUB_IMAGE2D, NULL, 0);
         }
         else {
             void* imageData = NULL;
             RING_READ_BEGIN(context->serverRing, imageData, imageSize);
-            decompressedData = decompressTexImage2D(format, width, height, imageData, context->threadPool);
+            /* 无论是否解压都必须走到 RING_READ_END，否则 ring 流会错位 */
+            if (imageData && imageSize >= requiredSize) {
+                decompressedData = decompressTexImage2D(format, width, height, imageData, context->threadPool);
+            }
             RING_READ_END(context->serverRing);
         }
     }
