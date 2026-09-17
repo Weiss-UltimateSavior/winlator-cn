@@ -1393,7 +1393,7 @@ void* GLRenderer_getTexImage(GLRenderer* renderer, GLenum target, GLint level, G
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, readbackTarget, readbackId, 0);
 
     void* pixels = malloc(*imageSize);
-    GLRenderer_readPixels(renderer, 0, 0, readbackWidth, readbackHeight, format, type, pixels);
+    GLRenderer_readPixels(renderer, 0, 0, readbackWidth, readbackHeight, format, type, pixels, false);
 
     // 分别按 DRAW/READ 槽恢复真实绑定。不能按 slot0（GL_FRAMEBUFFER 合并槽）裸
     // glBindFramebuffer 恢复：slot0 只是"客户端最后一次合并绑定"的缓存记录，与
@@ -1525,11 +1525,17 @@ void GLRenderer_resetFrameCount(GLRenderer* renderer) {
     renderer->frameCount = 0;
 }
 
-void GLRenderer_readPixels(GLRenderer* renderer, GLint x, GLint y, GLsizei width, GLsizei height, GLenum format, GLenum type, void* pixels) {
+void GLRenderer_readPixels(GLRenderer* renderer, GLint x, GLint y, GLsizei width, GLsizei height, GLenum format, GLenum type, void* pixels, bool allowCache) {
     int srcDataSize = width * height * 4;
     GLuint framebuffer = renderer->clientState.framebuffer[indexOfGLTarget(GL_READ_FRAMEBUFFER)];
     PixelReadCache* pixelReadCache = renderer->pixelReadCache;
-    if (pixelReadCache && pixelReadCache->valid && x == 0 && y == 0 &&
+    /* 缓存按 framebuffer + dataSize + 帧号判命中，这组键只对"读当前绑定的 READ
+       framebuffer"成立：内容变化由 draw/clear/blit 等操作经
+       GLRenderer_invalidatePixelReadCache 标记失效。getTexImage 读的是任意纹理，
+       它自建的临时 FBO 既绕过 clientState（槽位不变）又会因 glDeleteFramebuffers
+       回收而反复拿到同一个 id，键完全相同 → 不同纹理的回读会互相命中，表现为
+       多张文字纹理内容一致。故该路径传 allowCache=false。 */
+    if (allowCache && pixelReadCache && pixelReadCache->valid && x == 0 && y == 0 &&
                           pixelReadCache->dataSize == srcDataSize &&
                           pixelReadCache->framebuffer == framebuffer &&
                          (renderer->frameCount-pixelReadCache->frameIndex) <= PIXEL_READ_CACHE_SKIP_FRAMES) {
@@ -1544,7 +1550,7 @@ void GLRenderer_readPixels(GLRenderer* renderer, GLint x, GLint y, GLsizei width
     char* srcData = convert ? malloc(srcDataSize) : pixels;
     glReadPixels(x, y, width, height, GL_RGBA, GL_UNSIGNED_BYTE, srcData);
 
-    if (x == 0 && y == 0 && width <= 256 && height <= 256 && !convert) {
+    if (allowCache && x == 0 && y == 0 && width <= 256 && height <= 256 && !convert) {
         if (!pixelReadCache) renderer->pixelReadCache = pixelReadCache = calloc(1, sizeof(PixelReadCache));
         if (srcDataSize != pixelReadCache->dataSize) {
             MEMFREE(pixelReadCache->data);

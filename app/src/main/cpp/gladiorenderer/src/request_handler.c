@@ -2521,7 +2521,7 @@ void gd_handle_glReadPixels(GLContext* context) {
     GLBuffer* pixelPackBuffer = GLBuffer_getBound(GL_PIXEL_PACK_BUFFER);
     if (pixelPackBuffer) {
         uint64_t pointer = ArrayBuffer_getInt(&context->inputBuffer);
-        GLRenderer_readPixels(currentRenderer, x, y, width, height, GL_RGBA, GL_UNSIGNED_BYTE, (void*)pointer);
+        GLRenderer_readPixels(currentRenderer, x, y, width, height, GL_RGBA, GL_UNSIGNED_BYTE, (void*)pointer, true);
     }
     else {
         int imageSize = computeTexImageDataSize(format, type, width, height, 1);
@@ -2529,7 +2529,7 @@ void gd_handle_glReadPixels(GLContext* context) {
 
         if (imageSize > 0) {
             RING_WRITE_BEGIN(context->clientRing, imageSize);
-            GLRenderer_readPixels(currentRenderer, x, y, width, height, format, type, ringData);
+            GLRenderer_readPixels(currentRenderer, x, y, width, height, format, type, ringData, true);
             RING_WRITE_END(context->clientRing);
         }
     }

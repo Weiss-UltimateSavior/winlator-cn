@@ -203,7 +203,7 @@ extern void GLRenderer_disableVertexAttribute(GLRenderer* renderer, int location
 extern void GLRenderer_disableUnusedVertexAttributes(GLRenderer* renderer);
 extern void GLRenderer_resetFrameCount(GLRenderer* renderer);
 extern void GLRenderer_invalidatePixelReadCache(GLRenderer* renderer);
-extern void GLRenderer_readPixels(GLRenderer* renderer, GLint x, GLint y, GLsizei width, GLsizei height, GLenum format, GLenum type, void* pixels);
+extern void GLRenderer_readPixels(GLRenderer* renderer, GLint x, GLint y, GLsizei width, GLsizei height, GLenum format, GLenum type, void* pixels, bool allowCache);
 
 extern thread_local GLRenderer* currentRenderer;
 
