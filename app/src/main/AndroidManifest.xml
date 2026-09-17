@@ -54,6 +54,20 @@
             android:configChanges="keyboard|keyboardHidden|orientation|screenSize|screenLayout|smallestScreenSize|density|navigation"
             android:screenOrientation="sensor" />
 
+        <activity android:name="com.winlator.ExternalLaunchActivity"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:theme="@style/AppThemeDark"
+            android:configChanges="keyboard|keyboardHidden|orientation|screenSize|screenLayout|smallestScreenSize|density|navigation"
+            android:screenOrientation="sensor">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <category android:name="android.intent.category.BROWSABLE"/>
+                <data android:scheme="winlator" android:host="launch"/>
+            </intent-filter>
+        </activity>
+
         <activity android:name="com.winlator.ControlsEditorActivity"
             android:exported="false"
             android:theme="@style/AppThemeFullscreenDark"

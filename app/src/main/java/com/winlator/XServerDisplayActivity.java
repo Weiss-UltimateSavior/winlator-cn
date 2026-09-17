@@ -34,6 +34,7 @@ import com.winlator.container.Container;
 import com.winlator.container.ContainerManager;
 import com.winlator.container.DXWrappers;
 import com.winlator.container.GraphicsDrivers;
+import com.winlator.container.LaunchArgs;
 import com.winlator.container.Shortcut;
 import com.winlator.contentdialog.ActiveWindowsDialog;
 import com.winlator.contentdialog.AudioDriverConfigDialog;
@@ -118,6 +119,8 @@ public class XServerDisplayActivity extends AppCompatActivity implements Navigat
     private FrameRating frameRating;
     private Runnable editInputControlsCallback;
     private Shortcut shortcut;
+    private LaunchArgs launchArgs;
+    private static Intent pendingLaunchIntent;
     private String[] graphicsDriver = {GraphicsDrivers.DEFAULT_VULKAN_DRIVER, GraphicsDrivers.DEFAULT_OPENGL_DRIVER};
     private String audioDriver = Container.DEFAULT_AUDIO_DRIVER;
     private String dxwrapper = Container.DEFAULT_DXWRAPPER;
@@ -146,6 +149,12 @@ public class XServerDisplayActivity extends AppCompatActivity implements Navigat
     public void onCreate(Bundle savedInstanceState) {
         AppUtils.setActivityTheme(this);
         super.onCreate(savedInstanceState);
+
+        // onNewIntent 确认重启时通过静态字段传入新 Intent；recreate() 会沿用旧 Intent，需在此替换
+        Intent pendingIntent = pendingLaunchIntent;
+        pendingLaunchIntent = null;
+        if (pendingIntent != null) setIntent(pendingIntent);
+
         AppUtils.hideSystemUI(this);
         AppUtils.keepScreenOn(this);
         setContentView(R.layout.xserver_display_activity);
@@ -201,6 +210,8 @@ public class XServerDisplayActivity extends AppCompatActivity implements Navigat
             String shortcutPath = getIntent().getStringExtra("shortcut_path");
             if (shortcutPath != null && !shortcutPath.isEmpty()) shortcut = new Shortcut(container, new File(shortcutPath));
 
+            launchArgs = new LaunchArgs(parseLaunchOverrides(), shortcut, getIntent().hasExtra("exec_path"));
+
             String graphicsDriver = container.getGraphicsDriver();
             audioDriver = container.getAudioDriver();
             String dxwrapper = container.getDXWrapper();
@@ -212,6 +223,17 @@ public class XServerDisplayActivity extends AppCompatActivity implements Navigat
             screenOrientation = container.getScreenOrientation();
             swapResolution = container.isSwapResolution();
 
+            graphicsDriver = launchArgs.getExtra("graphicsDriver", graphicsDriver);
+            audioDriver = launchArgs.getExtra("audioDriver", audioDriver);
+            dxwrapper = launchArgs.getExtra("dxwrapper", dxwrapper);
+            wincomponents = launchArgs.getExtra("wincomponents", wincomponents);
+            dxwrapperConfig = launchArgs.getExtra("dxwrapperConfig", dxwrapperConfig);
+            graphicsDriverConfig = launchArgs.getExtra("graphicsDriverConfig", graphicsDriverConfig);
+            audioDriverConfig = new KeyValueSet(launchArgs.getExtra("audioDriverConfig", audioDriverConfig.toString()));
+            screenInfo = new ScreenInfo(launchArgs.getExtra("screenSize", container.getScreenSize()));
+            screenOrientation = launchArgs.getExtra("screenOrientation", screenOrientation);
+            swapResolution = launchArgs.getExtra("swapResolution", String.valueOf(swapResolution)).equals("true");
+
             applyScreenOrientation();
 
             if (swapResolution) {
@@ -219,26 +241,6 @@ public class XServerDisplayActivity extends AppCompatActivity implements Navigat
             }
 
             if (shortcut != null) {
-                graphicsDriver = shortcut.getExtra("graphicsDriver", container.getGraphicsDriver());
-                audioDriver = shortcut.getExtra("audioDriver", container.getAudioDriver());
-                dxwrapper = shortcut.getExtra("dxwrapper", container.getDXWrapper());
-                wincomponents = shortcut.getExtra("wincomponents", container.getWinComponents());
-                dxwrapperConfig = shortcut.getExtra("dxwrapperConfig", container.getDXWrapperConfig());
-                graphicsDriverConfig = shortcut.getExtra("graphicsDriverConfig", container.getGraphicsDriverConfig());
-                audioDriverConfig = new KeyValueSet(shortcut.getExtra("audioDriverConfig", container.getAudioDriverConfig()));
-                screenInfo = new ScreenInfo(shortcut.getExtra("screenSize", container.getScreenSize()));
-
-                String shortcutOrientation = shortcut.getExtra("screenOrientation");
-                if (!shortcutOrientation.isEmpty()) screenOrientation = shortcutOrientation;
-                String shortcutSwapRes = shortcut.getExtra("swapResolution");
-                if (!shortcutSwapRes.isEmpty()) swapResolution = shortcutSwapRes.equals("true");
-
-                applyScreenOrientation();
-
-                if (swapResolution) {
-                    screenInfo = new ScreenInfo(screenInfo.height, screenInfo.width);
-                }
-
                 win32AppWorkarounds.applyStartupWorkarounds(!shortcut.wmClass.isEmpty() ? shortcut.wmClass : shortcut.path);
             }
             else {
@@ -247,6 +249,7 @@ public class XServerDisplayActivity extends AppCompatActivity implements Navigat
             }
 
             String dinputMapperType = shortcut != null ? shortcut.getExtra("dinputMapperType", String.valueOf(GamepadHandler.DINPUT_MAPPER_TYPE_STANDARD)) : container.getExtra("dinputMapperType", String.valueOf(GamepadHandler.DINPUT_MAPPER_TYPE_STANDARD));
+            dinputMapperType = launchArgs.getOverride("dinputMapperType", dinputMapperType);
             if (!dinputMapperType.isEmpty()) winHandler.gamepadHandler.setDInputMapperType(Byte.parseByte(dinputMapperType));
 
             this.graphicsDriver = GraphicsDrivers.parseIdentifiers(graphicsDriver);
@@ -260,7 +263,7 @@ public class XServerDisplayActivity extends AppCompatActivity implements Navigat
         inputControlsManager = new InputControlsManager(this);
         xServer = new XServer(this, screenInfo);
         xServer.setWinHandler(winHandler);
-        final boolean[] flags = {false, shortcut != null || getIntent().hasExtra("exec_path")};
+        final boolean[] flags = {false, hasExecutable()};
         xServer.windowManager.addOnWindowModificationListener(new WindowManager.OnWindowModificationListener() {
             @Override
             public void onUpdateWindowContent(Window window) {
@@ -316,6 +319,25 @@ public class XServerDisplayActivity extends AppCompatActivity implements Navigat
                 editInputControlsCallback = null;
             }
         }
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        if (intent == null || !intent.getBooleanExtra(LaunchArgs.EXTRA_EXTERNAL_LAUNCH, false) || isFinishing()) return;
+
+        String launchId = intent.getStringExtra(LaunchArgs.EXTRA_LAUNCH_ID);
+        if (launchId != null && launchId.equals(getIntent().getStringExtra(LaunchArgs.EXTRA_LAUNCH_ID))) return;
+
+        ContentDialog.confirm(this, R.string.external_launch_restart_session, () -> {
+            // 先摘掉终止回调：停环境会 kill guest 进程，否则会触发 exit() 再次重启应用
+            if (environment != null) {
+                GuestProgramLauncherComponent launcher = environment.getComponent(GuestProgramLauncherComponent.class);
+                if (launcher != null) launcher.setTerminationCallback(null);
+            }
+            pendingLaunchIntent = intent;
+            recreate();
+        });
     }
 
     @Override
@@ -566,16 +588,16 @@ public class XServerDisplayActivity extends AppCompatActivity implements Navigat
         if (container != null) {
             if (container.getHUDMode() == FrameRating.Mode.FULL.ordinal()) envVars.put("X11_WND_GPU_INFO", "1");
 
-            String desktopName = shortcut != null || getIntent().hasExtra("exec_path") ? "nogui" : "shell";
+            String desktopName = hasExecutable() ? "nogui" : "shell";
             String guestExecutable = "wine explorer /desktop="+desktopName+","+xServer.screenInfo+" "+getWineStartCommand();
             guestProgramLauncherComponent.setGuestExecutable(guestExecutable);
 
             envVars.putAll(container.getEnvVars());
-            if (shortcut != null) envVars.putAll(shortcut.getExtra("envVars"));
+            if (launchArgs != null) envVars.putAll(launchArgs.getExtra("envVars"));
             if (!envVars.has("WINEESYNC")) envVars.put("WINEESYNC", "1");
 
-            guestProgramLauncherComponent.setBox64Preset(shortcut != null ? shortcut.getExtra("box64Preset", container.getBox64Preset()) : container.getBox64Preset());
-            guestProgramLauncherComponent.setBox64Version(shortcut != null ? shortcut.getExtra("box64Version", container.getBox64Version()) : container.getBox64Version());
+            guestProgramLauncherComponent.setBox64Preset(launchArgs != null ? launchArgs.getExtra("box64Preset", container.getBox64Preset()) : container.getBox64Preset());
+            guestProgramLauncherComponent.setBox64Version(launchArgs != null ? launchArgs.getExtra("box64Version", container.getBox64Version()) : container.getBox64Version());
         }
 
         environment = new XEnvironment(this, rootFS);
@@ -643,8 +665,8 @@ public class XServerDisplayActivity extends AppCompatActivity implements Navigat
         renderer.setCursorVisible(false);
         renderer.setCursorColor(preferences.getInt("cursor_color", 0xffffff));
         renderer.setCursorScale(preferences.getFloat("cursor_scale", 1.0f));
-        renderer.setForceWindowsFullscreen(shortcut != null && shortcut.getExtra("forceFullscreen", "0").equals("1"));
-        final boolean startFullscreen = shortcut != null && shortcut.getExtra("toggleFullscreen", "0").equals("1");
+        renderer.setForceWindowsFullscreen(launchArgs != null && launchArgs.getExtra("forceFullscreen", "0").equals("1"));
+        final boolean startFullscreen = launchArgs != null && launchArgs.getExtra("toggleFullscreen", "0").equals("1");
 
         xServer.setRenderer(renderer);
         rootView.addView(xServerView);
@@ -678,15 +700,8 @@ public class XServerDisplayActivity extends AppCompatActivity implements Navigat
             rootView.addView(frameRating);
         }
 
-        if (shortcut != null) {
-            String controlsProfile = shortcut.getExtra("controlsProfile", container.getExtra("controlsProfile", ""));
-            if (!controlsProfile.isEmpty()) {
-                ControlsProfile profile = inputControlsManager.getProfile(Integer.parseInt(controlsProfile));
-                if (profile != null) showInputControls(profile);
-            }
-        }
-        else {
-            String controlsProfile = container.getExtra("controlsProfile", "");
+        if (container != null) {
+            String controlsProfile = launchArgs != null ? launchArgs.getExtra("controlsProfile", container.getExtra("controlsProfile", "")) : container.getExtra("controlsProfile", "");
             if (!controlsProfile.isEmpty()) {
                 ControlsProfile profile = inputControlsManager.getProfile(Integer.parseInt(controlsProfile));
                 if (profile != null) showInputControls(profile);
@@ -1044,15 +1059,28 @@ public class XServerDisplayActivity extends AppCompatActivity implements Navigat
         return getIntent().getBooleanExtra("generate_wineprefix", false);
     }
 
+    private boolean hasExecutable() {
+        return launchArgs != null ? launchArgs.hasExecutable() : shortcut != null || getIntent().hasExtra("exec_path");
+    }
+
+    private JSONObject parseLaunchOverrides() {
+        String json = getIntent().getStringExtra(LaunchArgs.EXTRA_LAUNCH_OVERRIDES);
+        if (json == null || json.isEmpty()) return null;
+        try {
+            return new JSONObject(json);
+        }
+        catch (JSONException e) {
+            return null;
+        }
+    }
+
     private String getWineStartCommand() {
         String cmdArgs = "";
         String execPath = null;
-        String execArgs = "";
+        String execArgs = launchArgs != null ? launchArgs.getExtra("execArgs") : "";
+        execArgs = !execArgs.isEmpty() ? " "+execArgs : "";
 
         if (shortcut != null) {
-            execArgs = shortcut.getExtra("execArgs");
-            execArgs = !execArgs.isEmpty() ? " "+execArgs : "";
-
             if (shortcut.isLinkPath()) {
                 cmdArgs = "\""+shortcut.path+"\""+execArgs;
             }
@@ -1064,7 +1092,7 @@ public class XServerDisplayActivity extends AppCompatActivity implements Navigat
                 execPath = WineUtils.unixToDOSPath(intent.getStringExtra("exec_path"), container);
 
                 if (execPath.endsWith(".lnk")) {
-                    cmdArgs = "\""+execPath+"\"";
+                    cmdArgs = "\""+execPath+"\""+execArgs;
                     execPath = null;
                 }
             }
