@@ -57,6 +57,7 @@
         <activity android:name="com.winlator.ExternalLaunchActivity"
             android:exported="true"
             android:excludeFromRecents="true"
+            android:taskAffinity=""
             android:theme="@style/AppThemeDark"
             android:configChanges="keyboard|keyboardHidden|orientation|screenSize|screenLayout|smallestScreenSize|density|navigation"
             android:screenOrientation="sensor">

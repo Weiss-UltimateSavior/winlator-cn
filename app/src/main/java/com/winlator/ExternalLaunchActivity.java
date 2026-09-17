@@ -19,6 +19,7 @@ import com.winlator.contentdialog.ContentDialog;
 import com.winlator.core.AppUtils;
 import com.winlator.core.LaunchPathResolver;
 import com.winlator.core.LocaleHelper;
+import com.winlator.core.StringUtils;
 import com.winlator.xenvironment.RootFS;
 
 import org.json.JSONException;
@@ -41,6 +42,7 @@ public class ExternalLaunchActivity extends AppCompatActivity {
         private String containerName;
         private String shortcutPath;
         private String exePath;
+        private String dirPath;
         private String execArgs;
         private String overrides;
         private String launchId;
@@ -77,7 +79,7 @@ public class ExternalLaunchActivity extends AppCompatActivity {
         }
 
         LaunchRequest request = parseIntent(intent);
-        if (request.exePath == null && request.shortcutPath == null) {
+        if (request.exePath == null && request.shortcutPath == null && !hasText(request.dirPath)) {
             AppUtils.showToast(this, R.string.external_launch_no_executable);
             finish();
             return;
@@ -97,16 +99,83 @@ public class ExternalLaunchActivity extends AppCompatActivity {
         }
 
         String execUnixPath = null;
-        if (request.exePath != null) {
-            LaunchPathResolver.Result result = LaunchPathResolver.resolve(request.exePath, container);
-            if (!result.isSuccess()) {
-                AppUtils.showToast(this, getPathErrorMessage(result.error, request.exePath));
+        String dirUnixPath = null;
+        String mountPath = null;
+        String mountLetter = null;
+        String requestedLetter = null;
+
+        if (hasText(request.dirPath)) {
+            LaunchPathResolver.Result dirResult = LaunchPathResolver.resolve(request.dirPath, container);
+            if (!dirResult.isSuccess()) {
+                AppUtils.showToast(this, getPathErrorMessage(dirResult.error, request.dirPath));
                 finish();
                 return;
             }
-            execUnixPath = result.unixPath;
+            if (!(new File(dirResult.unixPath)).isDirectory()) {
+                AppUtils.showToast(this, getString(R.string.external_launch_dir_not_found, request.dirPath));
+                finish();
+                return;
+            }
+
+            dirUnixPath = dirResult.unixPath;
+            if (dirResult.needsMount()) mountPath = dirResult.mountPath;
         }
-        else if (!(new File(request.shortcutPath)).isFile()) {
+
+        if (request.exePath != null) {
+            String exeInput = request.exePath.trim();
+            String relativeExe = null;
+
+            if (dirUnixPath != null && LaunchPathResolver.isDosPath(exeInput)) {
+                requestedLetter = LaunchPathResolver.getDriveLetter(exeInput);
+                if (!LaunchPathResolver.hasDriveLetter(container, requestedLetter)) {
+                    relativeExe = StringUtils.removeStartSlash(exeInput.substring(2).replace("\\", "/"));
+                }
+                else requestedLetter = null;
+            }
+            else if (dirUnixPath != null && !exeInput.startsWith("/") && !exeInput.startsWith("file://") && !exeInput.startsWith("content://")) {
+                relativeExe = exeInput;
+            }
+
+            if (relativeExe != null) {
+                execUnixPath = relativeExe.isEmpty() ? dirUnixPath : dirUnixPath+"/"+relativeExe;
+                if (!(new File(execUnixPath)).exists()) {
+                    AppUtils.showToast(this, getString(R.string.external_launch_file_not_found, request.exePath));
+                    finish();
+                    return;
+                }
+                if (requestedLetter != null) {
+                    if (LaunchPathResolver.isReservedDriveLetter(requestedLetter)) {
+                        AppUtils.showToast(this, getString(R.string.external_launch_mount_conflict));
+                        finish();
+                        return;
+                    }
+                    if (mountPath == null) mountPath = dirUnixPath;
+                    mountLetter = null;
+                }
+            }
+            else {
+                LaunchPathResolver.Result result = LaunchPathResolver.resolve(exeInput, container);
+                if (!result.isSuccess()) {
+                    AppUtils.showToast(this, getPathErrorMessage(result.error, request.exePath));
+                    finish();
+                    return;
+                }
+                execUnixPath = result.unixPath;
+
+                if (result.needsMount()) {
+                    if (mountPath != null && !mountPath.equals(result.mountPath)) {
+                        AppUtils.showToast(this, getString(R.string.external_launch_mount_conflict));
+                        finish();
+                        return;
+                    }
+                    mountPath = result.mountPath;
+                }
+            }
+        }
+        else if (execUnixPath == null && dirUnixPath != null) {
+            execUnixPath = dirUnixPath;
+        }
+        else if (mountPath == null && execUnixPath == null && !(new File(request.shortcutPath)).isFile()) {
             AppUtils.showToast(this, getString(R.string.external_launch_file_not_found, request.shortcutPath));
             finish();
             return;
@@ -121,6 +190,39 @@ public class ExternalLaunchActivity extends AppCompatActivity {
         if (!validation.warnings.isEmpty()) Log.w(TAG, "Ignored unknown overrides: "+validation.warnings);
 
         JSONObject overrides = validation.overrides;
+        String drivesOverride = null;
+        if (mountPath != null) {
+            String baseDrives = overrides.has("drives") ? overrides.optString("drives") : container.getDrives();
+            String existingLetter = LaunchPathResolver.findDriveLetter(baseDrives, mountPath);
+
+            if (requestedLetter != null) {
+                String pathForLetter = LaunchPathResolver.getDrivePath(baseDrives, requestedLetter);
+                if (pathForLetter != null && !pathForLetter.equals(mountPath)) {
+                    AppUtils.showToast(this, getString(R.string.external_launch_mount_conflict));
+                    finish();
+                    return;
+                }
+                mountLetter = requestedLetter;
+            }
+            else if (existingLetter != null) mountLetter = existingLetter;
+            else mountLetter = LaunchPathResolver.allocateDriveLetter(baseDrives);
+
+            if (mountLetter == null) {
+                AppUtils.showToast(this, R.string.external_launch_no_free_drive);
+                finish();
+                return;
+            }
+
+            if (existingLetter == null || (requestedLetter != null && !requestedLetter.equals(existingLetter))) {
+                drivesOverride = LaunchPathResolver.appendDrive(baseDrives, mountLetter, mountPath);
+            }
+        }
+        if (drivesOverride != null) {
+            try {
+                overrides.put("drives", drivesOverride);
+            }
+            catch (JSONException e) {}
+        }
         String execArgs = mergeExecArgs(container, request, overrides);
         if (!execArgs.isEmpty()) {
             try {
@@ -144,7 +246,7 @@ public class ExternalLaunchActivity extends AppCompatActivity {
             ContentDialog dialog = new ContentDialog(this);
             dialog.setCancelable(false);
             dialog.setTitle(R.string.external_launch_confirm_title);
-            dialog.setMessage(buildConfirmMessage(container, request, execUnixPath, overrides), R.drawable.content_dialog_type_confirm);
+            dialog.setMessage(buildConfirmMessage(container, request, execUnixPath, overrides, mountLetter, mountPath), R.drawable.content_dialog_type_confirm);
             dialog.setOnConfirmCallback(launchAction);
             dialog.setOnCancelCallback(this::finish);
             dialog.show();
@@ -158,6 +260,7 @@ public class ExternalLaunchActivity extends AppCompatActivity {
         request.containerName = intent.getStringExtra("container_name");
         request.shortcutPath = intent.getStringExtra("shortcut_path");
         request.exePath = intent.getStringExtra("exe_path");
+        request.dirPath = intent.getStringExtra("dir_path");
         request.execArgs = intent.getStringExtra("exec_args");
         request.overrides = intent.getStringExtra("overrides");
         request.launchId = intent.getStringExtra(LaunchArgs.EXTRA_LAUNCH_ID);
@@ -170,6 +273,7 @@ public class ExternalLaunchActivity extends AppCompatActivity {
             if (request.containerName == null) request.containerName = data.getQueryParameter("container_name");
             if (request.shortcutPath == null) request.shortcutPath = data.getQueryParameter("shortcut");
             if (request.exePath == null) request.exePath = data.getQueryParameter("exe");
+            if (request.dirPath == null) request.dirPath = data.getQueryParameter("dir");
             if (request.execArgs == null) request.execArgs = data.getQueryParameter("args");
             if (request.overrides == null) request.overrides = data.getQueryParameter("overrides");
             if (request.launchId == null) request.launchId = data.getQueryParameter("launch_id");
@@ -252,6 +356,7 @@ public class ExternalLaunchActivity extends AppCompatActivity {
                 case "envVars": container.setEnvVars(value); break;
                 case "box64Version": container.setBox64Version(value); break;
                 case "box64Preset": container.setBox64Preset(value); break;
+                case "drives": container.setDrives(value); break;
                 case "controlsProfile": container.putExtra("controlsProfile", value); break;
                 case "dinputMapperType": container.putExtra("dinputMapperType", value); break;
             }
@@ -274,7 +379,7 @@ public class ExternalLaunchActivity extends AppCompatActivity {
         finish();
     }
 
-    private String buildConfirmMessage(Container container, LaunchRequest request, String execUnixPath, JSONObject overrides) {
+    private String buildConfirmMessage(Container container, LaunchRequest request, String execUnixPath, JSONObject overrides, String mountLetter, String mountPath) {
         String application = execUnixPath != null ? execUnixPath : request.shortcutPath;
         String overrideText = getString(R.string.external_launch_none);
         if (overrides.length() > 0) {
@@ -293,6 +398,7 @@ public class ExternalLaunchActivity extends AppCompatActivity {
         StringBuilder message = new StringBuilder(getString(R.string.external_launch_confirm_message,
             container.getName(), application, overrideText));
 
+        if (mountPath != null) message.append("\n").append(getString(R.string.external_launch_mount, mountLetter+": "+mountPath));
         String callerPackage = getCallerPackage();
         if (callerPackage != null) message.append("\n").append(getString(R.string.external_launch_source, callerPackage));
         if (request.save) message.append("\n").append(getString(R.string.external_launch_save_warning));
@@ -315,6 +421,10 @@ public class ExternalLaunchActivity extends AppCompatActivity {
     private String getCallerPackage() {
         Uri referrer = getReferrer();
         return referrer != null ? referrer.getAuthority() : null;
+    }
+
+    private static boolean hasText(String value) {
+        return value != null && !value.trim().isEmpty();
     }
 
     private static int parseInt(String value, int fallback) {

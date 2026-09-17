@@ -586,5 +586,9 @@
     <string name="external_launch_file_not_found">File not found: %s</string>
     <string name="external_launch_invalid_overrides">Invalid launch overrides: %s</string>
     <string name="external_launch_failed">External launch failed</string>
+    <string name="external_launch_dir_not_found">Directory not found: %s</string>
+    <string name="external_launch_mount">Mount: %s</string>
+    <string name="external_launch_no_free_drive">No free drive letter available</string>
+    <string name="external_launch_mount_conflict">Only one extra directory can be mounted per launch, or the requested drive letter conflicts</string>
     <string name="external_launch_restart_session">An external launch request was received. End the current session and start the requested application?</string>
 </resources>

@@ -1,6 +1,6 @@
 # 外置跳转启动 exe 与运行时参数覆盖 —— 设计文档
 
-> 状态：**P1 / P2 已实现**（含 `save=true` 持久化容器配置）；P3 的 `ACTION_VIEW` / `content://` 未实现
+> 状态：**P1 / P2 已实现**（含 `save=true` 持久化容器配置与**目录传递/自动盘符挂载**）；P3 的 `ACTION_VIEW` / `content://` 未实现
 > 目标版本：11.2.cn.x
 > 影响面：纯 Java，无 native、无构建流程改动（`.github/workflows/*`、`.cnb.yml` 均不受影响）
 
@@ -9,9 +9,10 @@
 | 内容 | 位置 |
 |---|---|
 | 外部入口 Activity | `app/src/main/java/com/winlator/ExternalLaunchActivity.java` |
-| 路径解析与校验 | `app/src/main/java/com/winlator/core/LaunchPathResolver.java` |
+| 路径解析、盘符分配/拼接、挂载点探测 | `app/src/main/java/com/winlator/core/LaunchPathResolver.java` |
 | 覆盖参数白名单与校验、运行时取值 | `app/src/main/java/com/winlator/container/LaunchArgs.java` |
-| 会话接入（三级优先级 / onNewIntent 重启） | `app/src/main/java/com/winlator/XServerDisplayActivity.java` |
+| 临时盘符不落盘（`setTransientDrives`） | `app/src/main/java/com/winlator/container/Container.java` |
+| 会话接入（三级优先级 / onNewIntent 重启 / 目录启动） | `app/src/main/java/com/winlator/XServerDisplayActivity.java` |
 | 设置开关 | `SettingsFragment.java`、`res/layout/settings_fragment.xml`（`CBAllowExternalLaunch` / `CBExternalLaunchConfirm`） |
 | 字符串 | `res/values/strings.xml`、`res/values-zh/strings.xml` |
 | Manifest | `AndroidManifest.xml`（`ExternalLaunchActivity` + `winlator://launch`） |
@@ -84,7 +85,8 @@ startActivity(i);
 | `container_id` | int | 三选一 | 容器 id |
 | `container_name` | String | 三选一 | 容器名，忽略大小写精确匹配 |
 | `shortcut_path` | String | 三选一（可与容器指定叠加） | 复用现有 `.desktop`，其 extras 作为中间层 |
-| `exe_path` | String | 与 shortcut_path 二选一 | exe 路径，支持 DOS / Unix / `file://` 三种格式（§7） |
+| `exe_path` | String | 与 shortcut_path 二选一 | exe 路径，支持 DOS / Unix / `file://` 三种格式（§7）；可为相对 `dir_path` 的文件名 |
+| `dir_path` | String | 否 | 要挂载并打开的目录（如 `/sdcard/galgame`）；可单独使用（打开该目录）或与 `exe_path` 组合 |
 | `exec_args` | String | 否 | 追加命令行参数 |
 | `overrides` | String(JSON) | 否 | 批量覆盖配置，白名单见 §5 |
 | `confirm` | boolean | 否 | 是否弹确认框；`false` 仅在全局设置允许时生效（§10） |
@@ -139,6 +141,26 @@ adb shell am start -n com.winlator/.ExternalLaunchActivity \
 
 外部调用方（Tasker、游戏前端）只需要 EXTRA 或 URL query，内部标准 extra 由 `ExternalLaunchActivity` 负责转换。
 
+目录传递示例：
+
+```bash
+# 只传目录：自动挂载 W: 并打开该目录
+adb shell am start -n com.winlator/.ExternalLaunchActivity \
+  --ei container_id 1 --es dir_path '/sdcard/galgame'
+
+# 目录 + 相对 exe
+adb shell am start -n com.winlator/.ExternalLaunchActivity \
+  --ei container_id 1 --es dir_path '/sdcard/galgame' --es exe_path 'Game/game.exe'
+
+# exe 不在映射内：自动挂载其所在目录
+adb shell am start -n com.winlator/.ExternalLaunchActivity \
+  --ei container_id 1 --es exe_path '/sdcard/galgame/Game/game.exe'
+
+# deeplink
+adb shell am start -a android.intent.action.VIEW \
+  -d 'winlator://launch?container=1&dir=%2Fsdcard%2Fgalgame&exe=Game%2Fgame.exe'
+```
+
 ## 5. Overrides 白名单
 
 与 `ShortcutSettingsDialog.java:147-193` 的写入口径完全对齐：**快捷方式能配的，外置启动也能覆盖**。
@@ -155,6 +177,7 @@ adb shell am start -n com.winlator/.ExternalLaunchActivity \
 | `audioDriver` | `AudioDrivers` | `:223` |
 | `audioDriverConfig` | `KeyValueSet` 格式 | `:228` |
 | `wincomponents` | `KeyValueSet` 格式 | `:225` |
+| `drives` | 盘符串 `L:pathL:path`，盘符仅 A–Z 且排除 C/X/Z，路径须以 `/` 开头且不含 `..`，最多 `MAX_DRIVE_LETTERS` 个 | `WineUtils.createDosdevicesSymlinks` |
 | `envVars` | `EnvVars` 格式（空格分隔 `K=V`） | `:574` |
 | `execArgs` | 字符串 | `:1053` |
 | `box64Version` | 必须存在于 `DefaultVersion.BOX64` 或已安装列表 | `:578` |
@@ -183,33 +206,59 @@ adb shell am start -n com.winlator/.ExternalLaunchActivity \
 
 > 关键约束：`activateContainer()` 是全局单例状态（切换 symlink），同一时刻只允许一个会话，与现有 singleTask 语义一致（§9）。
 
-## 7. 路径解析规则
+## 7. 路径解析与目录传递
 
-新增纯函数工具（建议放 `com.winlator.core.LaunchPathResolver`，或并入 `WineUtils`），输入 `exe_path` + `Container`，输出可交给 `getWineStartCommand()` 的格式。
+`com.winlator.core.LaunchPathResolver` 负责归一化；`ExternalLaunchActivity` 负责决定挂载。
 
-### 7.1 DOS 路径
+### 7.1 默认盘符与自动挂载
+
+容器默认只有 `D:`（Download）与 `E:`（应用内部存储），游戏常放在 `/sdcard/galgame` 等其他目录。
+本实现采用**自动临时挂载**（不拷贝文件）：
+
+1. 输入路径已在 drives 映射内 → 行为不变
+2. 不在映射内但存在：
+   - 文件 → 挂载其**所在目录**，`exe_path` 归一化为原 unix 路径
+   - 目录 → 挂载该目录；`exe_path` 即目录时以「目录模式」启动
+3. 空闲盘符从 `W:` 递减分配（跳过保留的 `C`/`X`/`Z` 与容器已用盘符）
+4. 生成 `drives` 覆盖注入本次会话：`D:...E:...W:/sdcard/galgame`
+5. `save=false`（默认）时**只对本次会话生效**：`Container.setTransientDrives()` 确保会话期间
+   `container.saveData()` 仍写入原始 drives（不会泄漏）；`save=true` 才调用 `setDrives()` 持久化
+
+### 7.2 `dir_path` 组合用法
+
+| 输入 | 行为 |
+|---|---|
+| 仅 `dir_path=/sdcard/galgame` | 挂载并**打开该目录**（`wfm.exe`） |
+| `dir_path` + `exe_path=game.exe`（相对） | 挂载目录并以 `<mount>/game.exe` 启动 |
+| `dir_path` + `exe_path=F:\game.exe`（未占用盘符） | 把目录挂到指定盘符 `F:` 并启动 `F:\game.exe` |
+| `dir_path` + `exe_path=C:\windows\wfm.exe`（已映射） | 挂载目录，exe 仍走既有映射 |
+
+一期限制：一次启动最多新增 **1 个**额外目录，超过或盘符冲突直接报错。
+
+### 7.3 DOS 路径
 
 - 匹配 `^[A-Za-z]:[\\/]`，直接使用
-- 校验盘符 ∈（container drives ∪ `C` / `Z`）
+- 校验盘符 ∈（container drives ∪ `C` / `Z`）；未知盘符且未配合 `dir_path` 仍报 `ERROR_UNMAPPED`
 - 宿主侧无法校验 `.lnk` 目标是否存在，运行时由 wine 报错，确认弹窗中提示
 
-### 7.2 Unix 路径 / file://
+### 7.4 Unix 路径 / file://
 
 - `file://` 先转 path
 - 调 `WineUtils.unixToDOSPath()`（`WineUtils.java:262-286`）
-- **返回空 = 不在任何 drive 映射内 → 拒绝启动**（内部入口不会遇到，因为它只浏览 drives 内文件；外置入口必须显式处理）
 - unix 路径可在宿主侧 `File.exists()` 校验，不存在时给明确错误
+- 目录启动命令：`/dir C:\windows "wfm.exe" "<DOS 目录>"`
+  （WFM 源码 `WinMain`：`numArgs > 1` 时以 `args[1]` 为起始目录；exe 保持裸文件名是既有已验证形式）
 
-### 7.3 content:// （Phase 3）
+### 7.5 content:// （Phase 3，未实现）
 
 - 优先取 `_data` 列拿到真实路径
 - 拿不到 → 复制到 `AppUtils.getInternalStorage()`（即 E 盘，见 `AppUtils.java:63-67`）下的临时目录再启动
-- **不新增 drive**，避免改动容器配置
 
-### 7.4 与现有 exec_path 的兼容
+### 7.6 与现有 exec_path 的兼容
 
-- `ContainerFileManagerFragment.java:383` 继续传 unix 格式 `exec_path`，`XServerDisplayActivity.java:1063-1070` 原逻辑不变
+- `ContainerFileManagerFragment.java:383` 继续传 unix 格式 `exec_path`，原逻辑不变
 - 外置入口把解析结果归一化成 unix `exec_path`，落到同一 extra
+- 目录型 `exec_path` 仅由外置入口产生；内部入口不会传目录
 
 ## 8. `XServerDisplayActivity` 改造：LaunchArgs 中间层
 
@@ -300,6 +349,7 @@ public class LaunchArgs {
 | P2 | `onNewIntent` 会话重启 | ✅ 已实现（static pending + recreate） |
 | P3 | ACTION_VIEW / `content://` | ❌ 未实现 |
 | P3 | `save=true` 持久化容器配置 | ✅ 已实现（仅容器级字段；`execArgs` / `forceFullscreen` / `toggleFullscreen` 为会话级，不写入） |
+| 扩展 | 目录传递：`dir_path`、未映射路径自动挂载、`drives` 覆盖、目录模式启动 | ✅ 已实现 |
 
 **已实现与原设计的差异**：
 
@@ -318,7 +368,45 @@ public class LaunchArgs {
 - **安全**：开关关闭时拒绝、免确认开关、确认弹窗「记住」
 - **回归**：容器文件管理器直启、快捷方式启动、桌面图标启动
 
-## 13. 附录：关键代码索引
+## 13. 验证记录（模拟器）
+
+环境：Pixel_Tablet AVD（arm64-v8a / API 35）+ 完整 native debug 构建（`assembleDebug`）。
+
+| 场景 | 结果 |
+|---|---|
+| 不存在的 `container_id` | ✅ toast `Container not found` |
+| 未映射盘符 `X:\nope.exe` | ✅ toast `Path is not inside the container drives` |
+| 映射内但文件不存在 | ✅ toast `File not found` |
+| overrides JSON 损坏 / 非法值 | ✅ toast `Invalid launch overrides: <key>` |
+| 未知 key | ✅ 忽略并写 logcat `Ignored unknown overrides` |
+| 合法启动 | ✅ 确认弹窗显示容器/路径/覆盖项/来源，确认后 wfm.exe 正常渲染 |
+| overrides 生效 | ✅ `screenSize=640x360` 会话窗口明显变小；`graphicsDriver=turnip` 生效 |
+| 会话中二次外置启动 | ✅ 弹「结束当前会话并启动新的程序」，确认后会话重建 |
+| `save=false` | ✅ 容器 `.container` 配置未被改动 |
+| `save=true` + `confirm=false` | ✅ 仍强制确认；确认后 `screenSize`/`graphicsDriver`/`box64Preset` 写入容器配置 |
+| 全局关闭「外部启动时弹窗确认」 | ✅ 入口确认弹窗被跳过 |
+| deeplink `winlator://launch?...` | ✅ 参数解析并转发成功 |
+| 相同 `launch_id` 重复请求 | ✅ 会话内静默忽略，不打扰当前会话 |
+| 全局关闭「允许外部应用启动」 | ✅ toast `External launch is disabled in Settings`，不启动 |
+
+**模拟器已知问题（与本次改动无关）**：容器默认 `graphicsDriver=vortek,zink` 时，从 UI 正常启动容器也会在
+`GPUHelper.vkGetApiVersion()` → `vkGetPhysicalDeviceProperties` 处原生 SIGSEGV（模拟器 SwiftShader Vulkan 探测）。
+绕过方式：外置启动覆盖 `{"graphicsDriver":"turnip"}`（本页测试即用此方式）。真机（Adreno）不受影响。
+
+### 13.1 目录传递实机验证（Huawei MAA-AN10 / Android 16，Adreno）
+
+| 场景 | 结果 |
+|---|---|
+| `exe_path=/sdcard/galgame/wfm.exe`（不在映射内） | ✅ 自动挂载 `W: /sdcard/galgame`，会话内 WFM 磁盘列表出现 W: |
+| `dir_path=/sdcard/galgame`（仅目录） | ✅ 自动挂载并**直接打开该目录**（WFM 显示 39 个游戏目录） |
+| `dir_path` + `exe_path=wfm.exe`（相对） | ✅ 解析为 `/sdcard/galgame/wfm.exe` 并启动 |
+| `save=false`（默认） | ✅ 会话运行/保存配置后 `.container` 的 drives 仍是原始值，无 W: 泄漏（`setTransientDrives`） |
+| `save=true` | ✅ 确认后 `W:/sdcard/galgame` 写入容器配置 |
+| 会话运行中再次外置启动（标准 `am start`） | ✅ 弹出入口确认框；确认后弹会话重启确认；重启后 W: 正常 |
+| deeplink / `launch_id` 防抖 / 非法参数 | ✅ 与模拟器一致 |
+| `android:taskAffinity=""` | ✅ 修复了部分设备（EMUI）上会话在顶时入口 Intent 被投递到会话而丢弃的问题 |
+
+## 14. 附录：关键代码索引
 
 | 功能 | 文件:行 |
 |---|---|

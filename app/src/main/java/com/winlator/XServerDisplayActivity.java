@@ -212,6 +212,10 @@ public class XServerDisplayActivity extends AppCompatActivity implements Navigat
 
             launchArgs = new LaunchArgs(parseLaunchOverrides(), shortcut, getIntent().hasExtra("exec_path"));
 
+            // drives 覆盖只影响本次会话（save=true 时由 ExternalLaunchActivity 落盘）
+            String launchDrives = launchArgs.getOverride("drives", "");
+            if (!launchDrives.isEmpty()) container.setTransientDrives(launchDrives);
+
             String graphicsDriver = container.getGraphicsDriver();
             audioDriver = container.getAudioDriver();
             String dxwrapper = container.getDXWrapper();
@@ -1089,9 +1093,16 @@ public class XServerDisplayActivity extends AppCompatActivity implements Navigat
         else {
             Intent intent = getIntent();
             if (intent.hasExtra("exec_path")) {
-                execPath = WineUtils.unixToDOSPath(intent.getStringExtra("exec_path"), container);
+                String unixPath = intent.getStringExtra("exec_path");
+                execPath = WineUtils.unixToDOSPath(unixPath, container);
 
-                if (execPath.endsWith(".lnk")) {
+                if ((new File(unixPath)).isDirectory()) {
+                    // 目录启动：wfm.exe 取首个参数作为起始目录（参数原样传递，仅处理结尾反斜杠）
+                    String dosDir = execPath.endsWith("\\") ? execPath+"\\" : execPath;
+                    cmdArgs = "/dir C:\\windows \"wfm.exe\" \""+dosDir+"\"";
+                    execPath = null;
+                }
+                else if (execPath.endsWith(".lnk")) {
                     cmdArgs = "\""+execPath+"\""+execArgs;
                     execPath = null;
                 }

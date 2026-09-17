@@ -586,5 +586,9 @@
     <string name="external_launch_file_not_found">文件不存在：%s</string>
     <string name="external_launch_invalid_overrides">无效的启动参数：%s</string>
     <string name="external_launch_failed">外部启动失败</string>
+    <string name="external_launch_dir_not_found">目录不存在：%s</string>
+    <string name="external_launch_mount">挂载：%s</string>
+    <string name="external_launch_no_free_drive">没有可用的盘符</string>
+    <string name="external_launch_mount_conflict">一次启动最多挂载一个额外目录，或请求的盘符冲突</string>
     <string name="external_launch_restart_session">收到外部启动请求，结束当前会话并启动新的程序？</string>
 </resources>

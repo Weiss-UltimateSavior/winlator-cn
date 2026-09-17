@@ -4,6 +4,7 @@ import android.content.Context;
 
 import com.winlator.box64.Box64PresetManager;
 import com.winlator.core.GeneralComponents;
+import com.winlator.core.LaunchPathResolver;
 import com.winlator.xserver.ScreenInfo;
 
 import org.json.JSONException;
@@ -13,6 +14,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashSet;
 import java.util.Iterator;
+import java.util.Locale;
 import java.util.Set;
 
 public class LaunchArgs {
@@ -30,7 +32,7 @@ public class LaunchArgs {
         "dxwrapper", "dxwrapperConfig",
         "audioDriver", "audioDriverConfig",
         "wincomponents", "envVars", "execArgs",
-        "box64Version", "box64Preset",
+        "box64Version", "box64Preset", "drives",
         "controlsProfile", "dinputMapperType",
         "forceFullscreen", "toggleFullscreen"
     ));
@@ -154,6 +156,19 @@ public class LaunchArgs {
                     if (token.isEmpty() || token.indexOf('=') <= 0) return null;
                 }
                 return value;
+            case "drives": {
+                if (value.isEmpty()) return null;
+                Set<String> letters = new HashSet<>();
+                int count = 0;
+                for (Drive drive : Container.drivesIterator(value)) {
+                    String letter = drive.letter.toUpperCase(Locale.ENGLISH);
+                    if (LaunchPathResolver.isReservedDriveLetter(letter)) return null;
+                    if (drive.path.isEmpty() || !drive.path.startsWith("/") || drive.path.contains("..")) return null;
+                    if (!letters.add(letter)) return null;
+                    count++;
+                }
+                return count > 0 && count <= Container.MAX_DRIVE_LETTERS ? value : null;
+            }
             case "box64Version":
                 return GeneralComponents.isBuiltinComponent(GeneralComponents.Type.BOX64, value) ||
                        GeneralComponents.getInstalledComponentNames(GeneralComponents.Type.BOX64, context).contains(value) ? value : null;
