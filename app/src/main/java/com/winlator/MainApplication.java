@@ -35,8 +35,18 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 public class MainApplication extends Application {
+    static {
+        // 必须在这里加载：onCreate 会调用 installNativeCrashHandler，而 libwinlator 平时
+        // 是由各使用方（GPUHelper、Drawable、XInputStream 等）在自己的 static 块里加载的，
+        // 那些类此时都还没被触碰。不显式加载会抛 UnsatisfiedLinkError，导致启动即崩。
+        System.loadLibrary("winlator");
+    }
+
     private static final String TAG = "CrashHandler";
     private static final String CRASH_LOG_FILE_NAME = "WinlatorCN-Crash.txt";
+    // 放 Download 而非内部 filesDir：filesDir 在非 root 下取不出来，之前正是因此导致
+    // 崩溃日志写了却读不到。放这里与 logcat 日志并列，直接就能导出来分析。
+    private static final String NATIVE_CRASH_LOG_FILE_NAME = "WinlatorCN-NativeCrash.txt";
     private static final String LOGCAT_LOG_FILE_NAME = "WinlatorCN-logcat.txt";
 
     // logcat -v threadtime 的一行形如：09-06 12:34:56.789  1234  5678 D System.out: msg
@@ -74,10 +84,33 @@ public class MainApplication extends Application {
         return new File(downloadsDir, CRASH_LOG_FILE_NAME);
     }
 
+    /**
+     * native 崩溃日志独立成文件：与 Java 崩溃日志分开，避免互相覆盖——
+     * Java 崩溃走 saveCrashLog 的覆盖写，会把 native 崩溃记录冲掉。
+     * 路径与 logcat 日志同在 Download，便于取出（内部 filesDir 非 root 读不到）。
+     */
+    private static File getNativeCrashLogFile() {
+        File downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS);
+        if (!downloadsDir.isDirectory()) downloadsDir.mkdirs();
+        return new File(downloadsDir, NATIVE_CRASH_LOG_FILE_NAME);
+    }
+
+    private static native void installNativeCrashHandler(String logFilePath);
+
     @Override
     public void onCreate() {
         super.onCreate();
         Thread.setDefaultUncaughtExceptionHandler(new CrashHandler(this, Thread.getDefaultUncaughtExceptionHandler()));
+        // native 崩溃（gladio / vortek / virglrenderer 等主进程内 so 的 SIGSEGV/SIGABRT）
+        // 不经过 JVM，Java 的 UncaughtExceptionHandler 完全感知不到，必须在 native 层接管。
+        // 处理器写完日志会把信号交回 debuggerd，tombstone 照常生成。
+        // 诊断设施绝不能拖垮启动：任何失败都只记日志，不向上抛。
+        try {
+            installNativeCrashHandler(getNativeCrashLogFile().getAbsolutePath());
+        }
+        catch (Throwable t) {
+            Log.e(TAG, "Failed to install native crash handler", t);
+        }
         // 先注入实际包名：容器默认 E: 盘路径按包名拼接，MT 改包共存后不能再用 com.winlator 的硬编码路径
         AppUtils.init(this);
         // MT 改包共存后 getPackageName() 为新包名，PatchUtils 据此决定是否替换解压产物中的宿主路径
