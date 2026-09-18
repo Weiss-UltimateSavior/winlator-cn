@@ -159,6 +159,8 @@ public class XServerDisplayActivity extends AppCompatActivity implements Navigat
         AppUtils.keepScreenOn(this);
         setContentView(R.layout.xserver_display_activity);
         ForegroundService.startSession(this);
+        // 只抓容器运行期间的 logcat：此处清空重抓，退出时停止，文件保留。
+        MainApplication.startLogcatSession(this);
 
         final PreloaderDialog preloaderDialog = new PreloaderDialog(this);
         preferences = PreferenceManager.getDefaultSharedPreferences(this);
@@ -394,6 +396,9 @@ public class XServerDisplayActivity extends AppCompatActivity implements Navigat
     protected void onDestroy() {
         winHandler.stop();
         if (environment != null) environment.stopEnvironmentComponents();
+        // 兜底：Activity 未经 exit() 而销毁时也要停掉 logcat，避免进程泄漏。
+        // 幂等，且此时文件已写好，不影响保留。
+        MainApplication.stopLogcatSession();
         ForegroundService.stopSession(this);
         super.onDestroy();
     }
@@ -512,6 +517,8 @@ public class XServerDisplayActivity extends AppCompatActivity implements Navigat
     private void exit() {
         winHandler.stop();
         if (environment != null) environment.stopEnvironmentComponents();
+        // 容器会话结束：停止抓取，文件保留供查看
+        MainApplication.stopLogcatSession();
 
         Intent intent = getIntent();
         if (intent.hasExtra("exec_path")) {
