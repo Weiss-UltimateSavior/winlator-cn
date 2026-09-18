@@ -48,6 +48,8 @@ public class Container {
     private String wincomponents = DEFAULT_WINCOMPONENTS;
     private String audioDriver = DEFAULT_AUDIO_DRIVER;
     private String drives = getDefaultDrives();
+    private boolean transientDrives = false;
+    private String persistedDrives;
     private String wineVersion = WineInfo.MAIN_WINE_INFO.identifier();
     private byte hudMode = (byte)FrameRating.Mode.DISABLED.ordinal();
     private byte startupSelection = STARTUP_SELECTION_ESSENTIAL;
@@ -166,6 +168,14 @@ public class Container {
 
     public void setDrives(String drives) {
         this.drives = drives;
+        this.transientDrives = false;
+        this.persistedDrives = null;
+    }
+
+    public void setTransientDrives(String drives) {
+        if (!transientDrives) persistedDrives = this.drives;
+        this.drives = drives;
+        this.transientDrives = true;
     }
 
     public byte getHUDMode() {
@@ -333,7 +343,7 @@ public class Container {
             if (!audioDriverConfig.isEmpty()) data.put("audioDriverConfig", audioDriverConfig);
             data.put("audioDriver", audioDriver);
             data.put("wincomponents", wincomponents);
-            data.put("drives", drives);
+            data.put("drives", transientDrives && persistedDrives != null ? persistedDrives : drives);
             data.put("hudMode", hudMode);
             data.put("startupSelection", startupSelection);
             data.put("box64Preset", box64Preset);
