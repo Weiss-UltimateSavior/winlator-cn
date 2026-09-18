@@ -87,6 +87,7 @@
     <string name="select_local_icon">Select Local Icon</string>
     <string name="clear_icon">Clear</string>
     <string name="unable_to_load_image">Unable to load image</string>
+    <string name="custom_icon_not_supported">This shortcut has no icon entry, cannot set a custom icon</string>
     <string name="import_icon_pack">Import Icon Pack</string>
     <string name="create_icon_pack">Create Icon Pack</string>
     <string name="export_icon_pack">Export Icon Pack</string>

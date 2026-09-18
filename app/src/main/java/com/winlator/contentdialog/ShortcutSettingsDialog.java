@@ -1,16 +1,24 @@
 package com.winlator.contentdialog;
 
 import android.content.Context;
+import android.content.Intent;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
+import android.graphics.Canvas;
+import android.graphics.Paint;
+import android.graphics.RectF;
 import android.view.Menu;
 import android.view.View;
 import android.widget.ArrayAdapter;
 import android.widget.CheckBox;
 import android.widget.EditText;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.PopupMenu;
 import android.widget.Spinner;
 
 import com.winlator.ContainerDetailFragment;
+import com.winlator.MainActivity;
 import com.winlator.R;
 import com.winlator.ShortcutsFragment;
 import com.winlator.box64.Box64PresetManager;
@@ -23,6 +31,7 @@ import com.winlator.core.EnvVars;
 import com.winlator.core.GeneralComponents;
 import com.winlator.container.GraphicsDriverPicker;
 import com.winlator.core.FileUtils;
+import com.winlator.core.ImageUtils;
 import com.winlator.core.StringUtils;
 import com.winlator.core.WineUtils;
 import com.winlator.inputcontrols.ControlsProfile;
@@ -33,12 +42,16 @@ import com.winlator.win32.PEParser;
 import com.winlator.winhandler.GamepadHandler;
 
 import java.io.File;
+import java.io.FileOutputStream;
+import java.io.IOException;
 import java.util.ArrayList;
 
 public class ShortcutSettingsDialog extends ContentDialog {
     private final ShortcutsFragment fragment;
     private final Shortcut shortcut;
     private InputControlsManager inputControlsManager;
+    private Bitmap customIcon;
+    private boolean clearIcon;
 
     public ShortcutSettingsDialog(ShortcutsFragment fragment, Shortcut shortcut) {
         super(fragment.getContext(), R.layout.shortcut_settings_dialog);
@@ -58,6 +71,48 @@ public class ShortcutSettingsDialog extends ContentDialog {
 
         final EditText etName = findViewById(R.id.ETName);
         etName.setText(shortcut.name);
+
+        final ImageView ivIconPreview = findViewById(R.id.IVIconPreview);
+        final View btClearIcon = findViewById(R.id.BTClearIcon);
+        final boolean iconSupported = !shortcut.iconName.isEmpty();
+        final boolean appliedCustomIcon = hasCustomIcon();
+        final Runnable refreshIconPreview = () -> {
+            Bitmap bitmap = customIcon;
+            if (bitmap == null) bitmap = clearIcon ? getOriginalIcon() : shortcut.icon;
+            if (bitmap != null) ivIconPreview.setImageBitmap(bitmap);
+            else ivIconPreview.setImageResource(R.drawable.container_file_link);
+            btClearIcon.setVisibility(iconSupported && (customIcon != null || (appliedCustomIcon && !clearIcon)) ? View.VISIBLE : View.GONE);
+        };
+        refreshIconPreview.run();
+
+        findViewById(R.id.BTSetIcon).setOnClickListener((v) -> {
+            if (!iconSupported) {
+                AppUtils.showToast(context, R.string.custom_icon_not_supported);
+                return;
+            }
+            MainActivity activity = (MainActivity)fragment.getActivity();
+            if (activity == null) return;
+            activity.setOpenFileCallback((uri) -> {
+                Bitmap bitmap = ImageUtils.getBitmapFromUri(context, uri, 256);
+                if (bitmap == null) {
+                    AppUtils.showToast(context, R.string.unable_to_load_image);
+                    return;
+                }
+                customIcon = bitmap;
+                clearIcon = false;
+                refreshIconPreview.run();
+            });
+            Intent intent = new Intent(Intent.ACTION_PICK);
+            intent.setType("image/*");
+            activity.startActivityForResult(intent, MainActivity.OPEN_FILE_REQUEST_CODE);
+        });
+        if (!iconSupported) findViewById(R.id.BTSetIcon).setAlpha(0.4f);
+
+        btClearIcon.setOnClickListener((v) -> {
+            customIcon = null;
+            clearIcon = true;
+            refreshIconPreview.run();
+        });
 
         final EditText etExecArgs = findViewById(R.id.ETExecArgs);
         etExecArgs.setText(shortcut.getExtra("execArgs"));
@@ -191,11 +246,134 @@ public class ShortcutSettingsDialog extends ContentDialog {
             shortcut.putExtra("dinputMapperType", dinputMapperType != Byte.parseByte(containerDInputMapperType) ? String.valueOf(dinputMapperType) : null);
 
             shortcut.saveData();
+            boolean iconChanged = (customIcon != null || clearIcon) && applyCustomIcon();
             if (!shortcut.name.equals(name) && !name.isEmpty()) renameShortcut(name);
+            else if (iconChanged) fragment.refreshContent();
 
             boolean requireRestart = graphicsDriver.equals(GraphicsDrivers.VORTEK) && VortekConfigDialog.isRequireRestart(oldGraphicsDriverConfig, graphicsDriverConfig);
             if (requireRestart) ContentDialog.confirm(context, R.string.the_settings_have_been_changed_do_you_want_to_restart_the_app, () -> AppUtils.restartApplication(context));
         });
+    }
+
+    private ArrayList<File> getIconTargetFiles() {
+        ArrayList<File> targetFiles = new ArrayList<>();
+
+        File hicolorDir = new File(shortcut.container.getRootDir(), ".local/share/icons/hicolor");
+        File[] sizeDirs = hicolorDir.listFiles();
+        if (sizeDirs != null) {
+            for (File sizeDir : sizeDirs) {
+                if (!sizeDir.isDirectory()) continue;
+                File file = new File(new File(sizeDir, "apps"), shortcut.iconName+".png");
+                if (file.isFile() && !targetFiles.contains(file)) targetFiles.add(file);
+            }
+        }
+
+        if (shortcut.iconFile != null && shortcut.iconFile.isFile() && !targetFiles.contains(shortcut.iconFile)) {
+            targetFiles.add(shortcut.iconFile);
+        }
+
+        return targetFiles;
+    }
+
+    private static File getBackupFile(File file) {
+        return new File(file.getParentFile(), file.getName()+".orig");
+    }
+
+    private boolean hasCustomIcon() {
+        for (File file : getIconTargetFiles()) {
+            File backupFile = getBackupFile(file);
+            if (backupFile.isFile() && backupFile.length() > 0) return true;
+        }
+        return false;
+    }
+
+    private Bitmap getOriginalIcon() {
+        Bitmap bitmap = null;
+        int maxSize = 0;
+
+        for (File file : getIconTargetFiles()) {
+            File backupFile = getBackupFile(file);
+            if (!backupFile.isFile() || backupFile.length() == 0) continue;
+
+            int size = getImageSize(backupFile);
+            if (size > maxSize) {
+                Bitmap decoded = BitmapFactory.decodeFile(backupFile.getPath());
+                if (decoded != null) {
+                    bitmap = decoded;
+                    maxSize = size;
+                }
+            }
+        }
+
+        return bitmap;
+    }
+
+    private boolean applyCustomIcon() {
+        final Context context = fragment.getContext();
+        if (context == null) return false;
+
+        if (shortcut.iconName.isEmpty()) {
+            AppUtils.showToast(context, R.string.custom_icon_not_supported);
+            return false;
+        }
+
+        ArrayList<File> targetFiles = getIconTargetFiles();
+        if (targetFiles.isEmpty()) targetFiles.add(new File(shortcut.container.getIconsDir(256), shortcut.iconName+".png"));
+
+        for (File file : targetFiles) {
+            File backupFile = getBackupFile(file);
+
+            if (clearIcon) {
+                if (backupFile.isFile()) {
+                    if (backupFile.length() > 0) FileUtils.copy(backupFile, file);
+                    else file.delete();
+                    backupFile.delete();
+                }
+                continue;
+            }
+
+            if (!backupFile.isFile()) {
+                try {
+                    if (file.isFile()) FileUtils.copy(file, backupFile);
+                    else backupFile.createNewFile();
+                }
+                catch (IOException e) {}
+            }
+
+            int size = getImageSize(file);
+            if (size <= 0) size = Math.max(customIcon.getWidth(), customIcon.getHeight());
+            if (size <= 0) size = 256;
+
+            Bitmap bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888);
+            Canvas canvas = new Canvas(bitmap);
+            Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
+            float scale = Math.min((float)size / customIcon.getWidth(), (float)size / customIcon.getHeight());
+            float width = customIcon.getWidth() * scale;
+            float height = customIcon.getHeight() * scale;
+            float left = (size - width) * 0.5f;
+            float top = (size - height) * 0.5f;
+            canvas.drawBitmap(customIcon, null, new RectF(left, top, left + width, top + height), paint);
+
+            File parent = file.getParentFile();
+            if (parent != null && !parent.isDirectory()) parent.mkdirs();
+
+            try (FileOutputStream fos = new FileOutputStream(file)) {
+                bitmap.compress(Bitmap.CompressFormat.PNG, 100, fos);
+            }
+            catch (IOException e) {
+                AppUtils.showToast(context, R.string.unable_to_load_image);
+            }
+            bitmap.recycle();
+        }
+
+        return true;
+    }
+
+    private static int getImageSize(File file) {
+        BitmapFactory.Options options = new BitmapFactory.Options();
+        options.inJustDecodeBounds = true;
+        BitmapFactory.decodeFile(file.getPath(), options);
+        return Math.max(options.outWidth, options.outHeight);
     }
 
     private void renameShortcut(String newName) {

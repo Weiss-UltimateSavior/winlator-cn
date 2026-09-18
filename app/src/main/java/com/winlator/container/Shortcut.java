@@ -20,6 +20,7 @@ public class Shortcut {
     public final Bitmap icon;
     public final File file;
     public final File iconFile;
+    public final String iconName;
     public final String wmClass;
     private final JSONObject extraData = new JSONObject();
 
@@ -32,12 +33,14 @@ public class Shortcut {
             this.path = null;
             this.icon = null;
             this.iconFile = null;
+            this.iconName = "";
             this.wmClass = "";
         }
         else {
             String execArgs = "";
             Bitmap icon = null;
             File iconFile = null;
+            String iconName = "";
             String wmClass = "";
             String section = "";
 
@@ -57,6 +60,7 @@ public class Shortcut {
                     if (section.equals("Desktop Entry")) {
                         if (key.equals("Exec")) execArgs = value;
                         if (key.equals("Icon")) {
+                            iconName = value;
                             for (short iconSize : iconSizes) {
                                 iconFile = new File(container.getIconsDir(iconSize), value+".png");
                                 if (iconFile.isFile()){
@@ -79,6 +83,7 @@ public class Shortcut {
             this.name = FileUtils.getBasename(file.getPath());
             this.icon = icon;
             this.iconFile = iconFile;
+            this.iconName = iconName;
             this.wmClass = wmClass;
 
             int indexOf;

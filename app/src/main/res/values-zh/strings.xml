@@ -86,6 +86,7 @@
     <string name="select_local_icon">选择本地图标</string>
     <string name="clear_icon">清除</string>
     <string name="unable_to_load_image">无法加载图片</string>
+    <string name="custom_icon_not_supported">该快捷方式没有图标记录，无法设置自定义图标</string>
     <string name="import_icon_pack">导入图标包</string>
     <string name="create_icon_pack">创建图标包</string>
     <string name="export_icon_pack">导出图标包</string>
